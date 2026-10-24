@@ -28,27 +28,24 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const settingsPath = context.asAbsolutePath('resources/spool-hooks.json');
   const hookScriptPath = context.asAbsolutePath('out/hook.js');
-  let sessionCount = 0;
-
   context.subscriptions.push(
     vscode.commands.registerCommand('spool.newSession', () => {
-      const spoolId = randomUUID();
-      const name = `Claude ${++sessionCount}`;
-      const terminal = vscode.window.createTerminal({
-        name,
-        cwd: vscode.workspace.workspaceFolders?.[0]?.uri,
-        env: {
-          SPOOL_ID: spoolId,
-          SPOOL_SOCKET: ipc.socketPath,
-          SPOOL_HOOK_SCRIPT: hookScriptPath,
-        },
-        iconPath: new vscode.ThemeIcon('sparkle'),
-      });
+      const terminalId = randomUUID();
+      const session = store.create(terminalId, (name) =>
+        vscode.window.createTerminal({
+          name,
+          cwd: vscode.workspace.workspaceFolders?.[0]?.uri,
+          env: {
+            SPOOL_ID: terminalId,
+            SPOOL_SOCKET: ipc.socketPath,
+            SPOOL_HOOK_SCRIPT: hookScriptPath,
+          },
+          iconPath: new vscode.ThemeIcon('sparkle'),
+        }),
+      );
       // Run claude through the user's shell so it gets their normal PATH and profile.
-      terminal.sendText(`claude --settings ${shellQuote(settingsPath)}`);
-      terminal.show();
-      store.add({ spoolId, name, status: 'starting', terminal });
-      log.info(`started ${name} (${spoolId})`);
+      session.terminal?.sendText(`claude --settings ${shellQuote(settingsPath)}`);
+      session.terminal?.show();
     }),
     vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
       session.terminal?.show();
@@ -77,6 +74,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     view,
     watchNeedsInput(store, view),
+    store.onDidChangeTerminalName(renameTabIfActive),
     // Keep the sidebar selection on the active session, however the terminal was focused.
     vscode.window.onDidChangeActiveTerminal((terminal) => {
       const session = store.findByTerminal(terminal);
@@ -88,6 +86,16 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
+
+/**
+ * VS Code can only rename the active terminal. These renames happen in the background, so
+ * rename the tab only if it's already active rather than stealing focus.
+ */
+async function renameTabIfActive(session: Session): Promise<void> {
+  if (session.terminal && vscode.window.activeTerminal === session.terminal) {
+    await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name: session.name });
+  }
+}
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;

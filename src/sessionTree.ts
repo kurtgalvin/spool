@@ -30,7 +30,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Session> {
   getTreeItem(session: Session): vscode.TreeItem {
     const display = STATUS_DISPLAY[session.status];
     const item = new vscode.TreeItem(session.name);
-    item.id = session.spoolId;
+    item.id = session.id;
     item.description = display.label;
     item.iconPath = display.icon;
     // Matched by `viewItem` in package.json menu `when` clauses.

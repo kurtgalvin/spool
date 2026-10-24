@@ -80,11 +80,18 @@ interrupt, so it doesn't fix this. Ideas for later:
 
 ### Data model (sketch)
 
+A Spool session is one Claude conversation, not one terminal. `/clear` ends the current
+session (it shows **exited**) and starts a new one in the same terminal; `/resume` of a
+session still in the list re-attaches that entry. Hooks are routed by `SPOOL_ID` (which
+terminal) plus `session_id` (which conversation).
+
 ```ts
 interface Session {
-  spoolId: string;
-  claudeSessionId?: string;   // from SessionStart; changes on /clear
+  id: string;
+  terminalId: string;         // the terminal's SPOOL_ID
+  claudeSessionId?: string;   // from SessionStart
   name: string;
+  nameSource: 'default' | 'auto' | 'user';
   status: 'starting' | 'working' | 'needs-input' | 'idle' | 'exited';
   parentId?: string;          // set for side threads
   groupId?: string;
