@@ -1,5 +1,8 @@
 # Milestone 1 — Session pipe
 
+**Status: ✅ done (2026-10-24).** Known gap: interrupted turns stay **working** (see
+[design.md](design.md#hooks--status)).
+
 The thinnest end-to-end slice: launch a Claude Code session from Spool and watch its
 status change live in a sidebar. Everything else in v1 builds on this pipe.
 See [design.md](design.md) for the overall design.

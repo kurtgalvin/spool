@@ -20,9 +20,53 @@
       {
         "command": "spool.newSession",
         "title": "New Session",
+        "category": "Spool",
+        "icon": "$(add)"
+      },
+      {
+        "command": "spool.focusSession",
+        "title": "Focus Session",
         "category": "Spool"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "spool",
+          "title": "Spool",
+          "icon": "resources/spool.svg"
+        }
+      ]
+    },
+    "views": {
+      "spool": [
+        {
+          "id": "spool.sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "spool.sessions",
+        "contents": "No Claude sessions yet.\n[New Session](command:spool.newSession)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "spool.newSession",
+          "when": "view == spool.sessions",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "spool.focusSession",
+          "when": "false"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

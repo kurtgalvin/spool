@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { IpcServer } from './ipc';
-import { SessionStore } from './sessions';
+import { SessionTreeProvider } from './sessionTree';
+import { Session, SessionStore } from './sessions';
 
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Spool', { log: true });
@@ -48,6 +49,10 @@ export async function activate(context: vscode.ExtensionContext) {
       store.add({ spoolId, name, status: 'starting', terminal });
       log.info(`started ${name} (${spoolId})`);
     }),
+    vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
+      session.terminal?.show();
+    }),
+    vscode.window.registerTreeDataProvider('spool.sessions', new SessionTreeProvider(store)),
   );
 }
 
