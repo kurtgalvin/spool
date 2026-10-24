@@ -2,10 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SavedSession, SessionPersistence } from './sessions';
 
+/** Writes come in bursts (temp file, then rename; several sessions at once). */
+const WATCH_DEBOUNCE_MS = 100;
+
 /**
  * Saves each session as its own JSON file in the extension's global storage. One file per
  * session means windows only ever write their own sessions, and the files don't depend on the
- * workspace's identity (which changes when a folder is added to a window).
+ * workspace's identity (which changes when a folder is added to a window). Other windows
+ * watch the directory to mirror sessions they don't run.
  */
 export class SessionFiles implements SessionPersistence {
   constructor(private readonly dir: string) {
@@ -36,6 +40,21 @@ export class SessionFiles implements SessionPersistence {
 
   delete(id: string): void {
     fs.rmSync(this.fileFor(id), { force: true });
+  }
+
+  /** Calls `onChange` (debounced) when any session file changes, including this window's own writes. */
+  watch(onChange: () => void): { dispose(): void } {
+    let timer: NodeJS.Timeout | undefined;
+    const watcher = fs.watch(this.dir, () => {
+      clearTimeout(timer);
+      timer = setTimeout(onChange, WATCH_DEBOUNCE_MS);
+    });
+    return {
+      dispose: () => {
+        clearTimeout(timer);
+        watcher.close();
+      },
+    };
   }
 
   private fileFor(id: string): string {

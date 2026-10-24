@@ -14,10 +14,11 @@ for the overall design.
    collapsed group shows counts of sessions needing input or working. Sessions started in
    a repo's subfolder show the subfolder next to their status.
 2. **Sessions from every window** — show running sessions from other VS Code windows under
-   their folders, with live status, marked as running elsewhere (their terminal can't be
-   focused from here). Windows already save every change to their session files, so other
-   windows can mirror those files (watch the sessions directory) instead of interpreting
-   hooks for terminals they don't own.
+   their folders, with live status, marked **other window** (their terminal can't be
+   focused from here, and they have no actions). Windows already save every change to their
+   session files, so other windows mirror those files (watching the sessions directory)
+   instead of interpreting hooks for terminals they don't own. A 5s check catches windows
+   that closed without updating their files; their sessions show as exited.
 3. **Side threads** — **Branch Side Thread** on a session runs
    `claude --resume <id> --fork-session` in a new terminal; the fork is nested under its
    parent session.

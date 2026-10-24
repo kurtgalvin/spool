@@ -10,21 +10,30 @@ import { SessionFiles } from './persistence';
 import { SavedSession, Session, SessionStore } from './sessions';
 import { SessionTreeProvider } from './sessionTree';
 
+const LIVENESS_CHECK_MS = 5_000;
+
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Spool', { log: true });
   context.subscriptions.push(log);
 
   const storageDir = context.globalStorageUri.fsPath;
-  const store = new SessionStore(log, new SessionFiles(path.join(storageDir, 'sessions')));
-  const loadSessions = () =>
-    store.load(vscode.window.terminals, (terminal) => withTimeout(terminal.processId, 1000), isInOpenFolder);
+  const sessionFiles = new SessionFiles(path.join(storageDir, 'sessions'));
+  const store = new SessionStore(log, sessionFiles);
+  const syncSessions = () =>
+    store.sync(vscode.window.terminals, (terminal) => withTimeout(terminal.processId, 1000), isInOpenFolder);
+  // Other windows' sessions update through their files. The timer catches windows that closed
+  // without updating them (their shells are gone).
+  const livenessTimer = setInterval(syncSessions, LIVENESS_CHECK_MS);
   context.subscriptions.push(
     store,
+    sessionFiles.watch(syncSessions),
+    { dispose: () => clearInterval(livenessTimer) },
     vscode.window.onDidCloseTerminal((terminal) => store.handleTerminalClosed(terminal)),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => loadSessions()),
+    vscode.window.onDidOpenTerminal(() => syncSessions()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => syncSessions()),
   );
   // Before connecting, so hooks (including ones the broker replays) find their sessions.
-  await loadSessions();
+  await syncSessions();
 
   const broker = new BrokerClient(
     brokerSocketPath(),
@@ -148,9 +157,9 @@ async function pickWorkspaceFolder(): Promise<string | undefined> {
   return (await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Start the session in…' }))?.uri.fsPath;
 }
 
-/** Exited sessions are shown in windows that have their repo open, so they can be resumed there. */
+/** Exited sessions are shown in windows that have their folder open, so they can be resumed there. */
 function isInOpenFolder(session: SavedSession): boolean {
-  const cwd = session.cwd;
+  const cwd = session.launchDir ?? session.cwd;
   return !!cwd && !!vscode.workspace.workspaceFolders?.some((folder) => {
     const relative = path.relative(folder.uri.fsPath, cwd);
     return !relative.startsWith('..') && !path.isAbsolute(relative);

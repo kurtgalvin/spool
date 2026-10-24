@@ -128,13 +128,19 @@ interface FolderGroup {       // derived, not stored
 
 On **Reload Window**, terminals survive with the same shell pid and `claude` still running,
 but `creationOptions.env` comes back empty, so `SPOOL_ID` isn't visible to the extension.
-Each session is saved (minus the terminal) to `globalStorage/sessions/<id>.json`. On
-startup — and when workspace folders change — a window loads:
+Each session is saved (minus the terminal) to `globalStorage/sessions/<id>.json` by the
+window running it, on every change. Every window syncs from those files on startup, when
+a file changes (directory watch), when a terminal opens, when workspace folders change,
+and every 5s (to notice windows that closed without updating their files). Sessions
+running in the window itself are skipped — it's their source of truth. Other files become:
 
-- sessions whose `shellPid` matches one of its terminals (re-attached, last known status);
-- exited sessions whose `cwd` is inside one of its workspace folders (resumable);
+- **re-attached**, if `shellPid` matches one of the window's terminals (last known status);
+- **running elsewhere**, if the shell is still alive (or has no pid yet): shown read-only
+  with the other window's live status, never written back;
+- **exited**, if the launch folder is inside one of the window's workspace folders
+  (resumable); otherwise hidden.
 
-and skips sessions whose shell is still alive elsewhere (running in another window).
+Sessions whose file disappears (removed in another window) are dropped.
 
 ## v1 scope
 
@@ -172,9 +178,8 @@ and skips sessions whose shell is still alive elsewhere (running in another wind
 - **Groups:** folder groups are automatic. Add named groups later? Group actions (close
   all, broadcast prompt)?
 - **Side-thread nesting:** full tree, or one level deep?
-- **Scope:** each window shows its own running sessions plus exited ones for its open
-  folders. Planned (milestone 3): also show other windows' running sessions under their
-  folders, mirrored from their session files.
+- **Scope:** each window shows every running session (other windows' read-only) plus
+  exited ones for its open folders. Should exited sessions from other folders show too?
 - **Comment routing (v2):** which session receives a comment — picker, last-focused, or pinned per file/worktree?
 - **Comment delivery (v2):** send each comment immediately, or batch as a review?
 - **Getting results back:** what form should a "result" take — transcript excerpt, summary, diff?

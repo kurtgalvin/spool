@@ -118,13 +118,20 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     // Show where in the group the session started, if not at its root.
     const group = this.groupOf(session);
     const subdir = group && session.launchDir ? path.relative(group.dir, session.launchDir) : '';
-    item.description = subdir ? `${display.label} · ${subdir}` : display.label;
+    item.description = [display.label, subdir, session.elsewhere && 'other window'].filter(Boolean).join(' · ');
     item.iconPath = display.icon;
-    // Matched by `viewItem` in package.json menu `when` clauses.
-    item.contextValue = `session:${session.status}${session.status === 'exited' && session.claudeSessionId ? ':resumable' : ''}`;
-    item.tooltip = session.claudeSessionId
-      ? `${session.name} — ${display.label}\nClaude session ${session.claudeSessionId}`
-      : `${session.name} — ${display.label}`;
+    // Matched by `viewItem` in package.json menu `when` clauses. Sessions in other windows get
+    // no actions: their window owns them.
+    item.contextValue = session.elsewhere
+      ? `elsewhere:${session.status}`
+      : `session:${session.status}${session.status === 'exited' && session.claudeSessionId ? ':resumable' : ''}`;
+    item.tooltip = [
+      `${session.name} — ${display.label}`,
+      session.elsewhere && 'Running in another VS Code window',
+      session.claudeSessionId && `Claude session ${session.claudeSessionId}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
     if (session.terminal) {
       item.command = { command: 'spool.focusSession', title: 'Focus Session', arguments: [session] };
     }

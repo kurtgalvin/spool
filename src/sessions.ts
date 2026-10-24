@@ -26,10 +26,12 @@ export interface Session {
   terminal?: vscode.Terminal;
   /** The terminal's shell process id: the only identifier that survives a window reload. */
   shellPid?: number;
+  /** Running in another VS Code window: mirrored from its file, read-only here. Never saved. */
+  elsewhere?: boolean;
 }
 
 /** A session as saved to disk; terminals are re-matched by shellPid on load. */
-export type SavedSession = Omit<Session, 'terminal'>;
+export type SavedSession = Omit<Session, 'terminal' | 'elsewhere'>;
 
 export interface SessionPersistence {
   loadAll(): SavedSession[];
@@ -37,11 +39,17 @@ export interface SessionPersistence {
   delete(id: string): void;
 }
 
-/** Registry of this window's sessions, kept current from hook events and saved as they change. */
+/**
+ * Registry of sessions: this window's, kept current from hook events and saved as they change,
+ * plus other windows' running sessions and resumable exited ones, mirrored from their files.
+ */
 export class SessionStore implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
   private readonly terminals = new Map<string, vscode.Terminal>();
   private defaultNameCount = 0;
+  private pendingSync = Promise.resolve();
+  /** Set while applying session files, so changes read from disk aren't written back. */
+  private applyingFiles = false;
   private readonly changed = new vscode.EventEmitter<Session>();
   readonly onDidChange = this.changed.event;
   private readonly statusChanged = new vscode.EventEmitter<{ session: Session; previous: SessionStatus }>();
@@ -58,58 +66,93 @@ export class SessionStore implements vscode.Disposable {
     private readonly persistence: SessionPersistence,
   ) {
     this.changed.event((session) => {
-      // remove() fires after deleting; don't write the session back.
-      if (this.sessions.has(session.id)) {
-        // The terminal can't be serialized; load() re-matches it by shellPid.
-        const { terminal, ...saved } = session;
+      // remove() fires after deleting; don't write the session back. Sessions running elsewhere
+      // belong to their own window.
+      if (this.sessions.has(session.id) && !session.elsewhere && !this.applyingFiles) {
+        // The terminal can't be serialized; sync() re-matches it by shellPid.
+        const { terminal, elsewhere, ...saved } = session;
         this.persistence.save(saved);
       }
     });
   }
 
   /**
-   * Loads saved sessions this window should show, skipping ones already loaded:
-   * - sessions whose terminal is in this window, matched by shell pid (VS Code doesn't expose a
-   *   revived terminal's env), re-attached with their last known status;
-   * - exited sessions that `isRelevant` (e.g. in an open workspace folder), so they can be resumed.
-   * Sessions still running in another window are left to that window.
+   * Brings the store in line with the session files, which every window writes as its
+   * sessions change. Sessions running in this window are left alone: this window is their
+   * source of truth. Every other file is loaded or updated:
+   * - running in one of `terminals`, matched by shell pid (VS Code doesn't expose a revived
+   *   terminal's env): re-attached with its last known status;
+   * - running in another window (its shell is alive): shown read-only, marked `elsewhere`;
+   * - otherwise exited: shown if `isRelevant` (e.g. in an open workspace folder), so it can be
+   *   resumed.
+   * Sessions whose file is gone (removed in another window) are dropped. Calls are serialized.
    */
-  async load(
+  sync(
+    terminals: readonly vscode.Terminal[],
+    pidOf: (t: vscode.Terminal) => Promise<number | undefined>,
+    isRelevant: (session: SavedSession) => boolean,
+  ): Promise<void> {
+    this.pendingSync = this.pendingSync
+      .then(() => this.syncNow(terminals, pidOf, isRelevant))
+      .catch((err) => this.log.error(`syncing sessions failed: ${(err as Error).message}`));
+    return this.pendingSync;
+  }
+
+  private async syncNow(
     terminals: readonly vscode.Terminal[],
     pidOf: (t: vscode.Terminal) => Promise<number | undefined>,
     isRelevant: (session: SavedSession) => boolean,
   ): Promise<void> {
     const pids = await Promise.all(terminals.map(pidOf));
-    let attached = 0;
-    let loaded = 0;
-    for (const saved of this.persistence.loadAll()) {
-      if (this.sessions.has(saved.id)) {
-        continue;
+    const files = this.persistence.loadAll();
+    const dropped = new Set(this.sessions.keys());
+    this.applyingFiles = true;
+    try {
+      for (const file of files) {
+        const existing = this.sessions.get(file.id);
+        if (existing?.terminal) {
+          dropped.delete(file.id);
+          continue;
+        }
+        const next: Session = { ...file, elsewhere: false };
+        const running = file.status !== 'exited';
+        const index = running && file.shellPid !== undefined ? pids.indexOf(file.shellPid) : -1;
+        if (index >= 0) {
+          next.terminal = terminals[index];
+          this.terminals.set(next.terminalId, next.terminal);
+          this.log.info(`${next.name}: re-attached to its terminal`);
+        } else if (running && (file.shellPid === undefined || isProcessAlive(file.shellPid))) {
+          // No pid yet means its window is still starting it.
+          next.elsewhere = true;
+        } else if (isRelevant(file)) {
+          next.status = 'exited';
+        } else {
+          continue;
+        }
+        dropped.delete(file.id);
+        if (!existing) {
+          this.sessions.set(next.id, next);
+          this.changed.fire(next);
+        } else if (!sameSession(existing, next)) {
+          // Update in place: the tree view tracks sessions by object.
+          Object.assign(existing, next);
+          this.changed.fire(existing);
+        }
       }
-      const session: Session = { ...saved };
-      const wasRunning = saved.status !== 'exited' && saved.shellPid !== undefined;
-      const index = wasRunning ? pids.indexOf(saved.shellPid) : -1;
-      if (index >= 0) {
-        session.terminal = terminals[index];
-        this.terminals.set(session.terminalId, session.terminal);
-        attached++;
-      } else if (wasRunning && isProcessAlive(saved.shellPid!)) {
-        continue;
-      } else if (isRelevant(saved)) {
-        session.status = 'exited';
-      } else {
-        continue;
+      for (const id of dropped) {
+        const session = this.sessions.get(id)!;
+        if (session.terminal) {
+          continue;
+        }
+        this.sessions.delete(id);
+        this.changed.fire(session);
       }
-      this.sessions.set(session.id, session);
-      loaded++;
-      this.changed.fire(session);
+    } finally {
+      this.applyingFiles = false;
     }
     for (const session of this.sessions.values()) {
       const n = /^Claude (\d+)$/.exec(session.name);
       this.defaultNameCount = Math.max(this.defaultNameCount, n ? Number(n[1]) : 0);
-    }
-    if (loaded) {
-      this.log.info(`loaded ${loaded} saved session(s), ${attached} re-attached to running terminals`);
     }
   }
 
@@ -294,6 +337,11 @@ export class SessionStore implements vscode.Disposable {
     // Fire even without a status change: claudeSessionId may have changed.
     this.changed.fire(session);
   }
+}
+
+function sameSession(a: Session, b: Session): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as (keyof Session)[]);
+  return [...keys].every((key) => a[key] === b[key]);
 }
 
 function isProcessAlive(pid: number): boolean {
