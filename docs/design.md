@@ -25,26 +25,43 @@ Marketplace release — e.g. never modify the user's global Claude Code config.
 | How we learn session state | Claude Code hooks | Structured, reliable events vs. fragile terminal scraping. |
 | How hooks are installed | Per-launch via `claude --settings <spool-hooks.json>` | Hooks only apply to Spool-launched sessions; global `~/.claude/settings.json` is untouched. |
 | Side threads | `claude --resume <id> --fork-session` | Native fork: new session with the parent's full history, parent unaffected. |
+| Hook transport | One per-user socket owned by a background **broker** process | Hooks need one stable address regardless of which window or workspace launched the session; only one process can listen on a socket, and windows reload. |
+| Persistence | One JSON file per session in global storage | Survives reloads and workspace identity changes (adding a folder to a window); windows only write their own sessions. |
 
 ## Architecture
 
 ```
-┌──────────────── VS Code extension ────────────────┐
-│  Session tree view  ◄──  Session store  ◄── IPC server (local socket)
-│        │                     ▲                         ▲
-│        ▼                     │                         │
-│  createTerminal(env: SPOOL_ID, cmd: claude --settings …)│
-└────────────────────────────────────────────────────────┘
-                     │                                    │
-                     ▼                                    │
-              claude (in terminal) ── hook fires ──► spool-hook script
-                                     (stdin JSON)    (sends SPOOL_ID + payload)
+ window A (extension host)          window B (extension host)
+ tree view ◄─ session store          tree view ◄─ session store
+                 ▲   BrokerClient                    ▲   BrokerClient
+                 │   (subscribe, ping every 2s)      │
+                 └────────────┐        ┌─────────────┘
+                              │        │
+                     broker (detached; one per user)
+                     $TMPDIR/spool-<uid>-v1.sock
+                              ▲
+                              │ one line per hook
+ claude (terminal) ─ hook ─► spool-hook script (SPOOL_ID + payload)
 ```
+
+### Broker
+
+- The first window that needs it spawns `out/broker.js` detached (using the extension
+  host's own executable with `ELECTRON_RUN_AS_NODE`), so it outlives reloads.
+- Hook scripts connect, send one message, and close. Windows send `subscribe`, then `ping`
+  every 2s, and receive every hook message; each window ignores terminals it doesn't own.
+- Exits after 60s without a ping from any window (long enough to survive a reload).
+- Replays the last minute of messages to a new subscriber, so hooks fired mid-reload
+  aren't lost.
+- If two windows race to start it, the loser sees a live broker and exits; a socket file
+  left by a crash (nothing answering) is removed. Clients reconnect, restarting the broker
+  if needed, whenever the connection drops.
+- The socket path carries a protocol version; bump it on incompatible changes.
 
 ### Launching a session
 
 1. Extension generates a `SPOOL_ID` and creates an integrated terminal with
-   `SPOOL_ID` (and the IPC socket path) in its environment.
+   `SPOOL_ID` (and the broker socket path) in its environment.
 2. Terminal runs `claude --settings <path-to-spool-hooks.json>` (plus
    `--resume <id> --fork-session` for side threads).
 3. The terminal ↔ `SPOOL_ID` mapping is kept in the session store.
@@ -52,7 +69,7 @@ Marketplace release — e.g. never modify the user's global Claude Code config.
 ### Hooks → status
 
 Each hook runs a small script that reads the hook's JSON payload from stdin and sends
-it, tagged with `SPOOL_ID`, to the extension's local socket.
+it, tagged with `SPOOL_ID`, to the broker, which forwards it to every window.
 
 | Hook | Effect |
 | --- | --- |
@@ -95,8 +112,9 @@ interface Session {
   status: 'starting' | 'working' | 'needs-input' | 'idle' | 'exited';
   parentId?: string;          // set for side threads
   groupId?: string;
-  cwd: string;
+  cwd?: string;
   terminal?: vscode.Terminal;
+  shellPid?: number;          // the only terminal identifier that survives a reload
 }
 
 interface Group {
@@ -105,8 +123,17 @@ interface Group {
 }
 ```
 
-Groups, names, and parent links are persisted in workspace state so the structure
-survives reloads, even though the terminals themselves do not.
+### Persistence and reloads
+
+On **Reload Window**, terminals survive with the same shell pid and `claude` still running,
+but `creationOptions.env` comes back empty, so `SPOOL_ID` isn't visible to the extension.
+Each session is saved (minus the terminal) to `globalStorage/sessions/<id>.json`. On
+startup — and when workspace folders change — a window loads:
+
+- sessions whose `shellPid` matches one of its terminals (re-attached, last known status);
+- exited sessions whose `cwd` is inside one of its workspace folders (resumable);
+
+and skips sessions whose shell is still alive elsewhere (running in another window).
 
 ## v1 scope
 
@@ -134,7 +161,7 @@ survives reloads, even though the terminals themselves do not.
 - Mute notifications per session (or per group), so busy sessions don't keep toasting.
 - Side threads reporting results back to their parent (reusing the reply mechanism).
 - Worktree-per-session for isolated parallel work.
-- tmux backing for sessions that survive VS Code reloads.
+- tmux backing for sessions that survive quitting VS Code (reloads are already handled).
 - Session history browser from `~/.claude/projects/` transcripts.
 - Marketplace release.
 
@@ -142,11 +169,15 @@ survives reloads, even though the terminals themselves do not.
 
 - **Groups:** purely visual in v1, or also group actions (close all, broadcast prompt, combined status)?
 - **Side-thread nesting:** full tree, or one level deep?
-- **Scope:** show only the current workspace's sessions, or sessions across all windows?
+- **Scope:** each window shows its own running sessions plus exited ones for its open
+  folders. Should it also show other windows' running sessions (read-only, can't focus)?
+  The broker would make a shared view possible.
 - **Comment routing (v2):** which session receives a comment — picker, last-focused, or pinned per file/worktree?
 - **Comment delivery (v2):** send each comment immediately, or batch as a review?
 - **Getting results back:** what form should a "result" take — transcript excerpt, summary, diff?
 - **Naming:** auto-name sessions from the first prompt? (`UserPromptSubmit` carries `prompt`.)
   The transcript also stores a generated title (`{"type": "ai-title", "aiTitle": "..."}`),
   which would make nicer names, but it's an undocumented internal format and could change.
-- **IPC transport:** Unix socket vs. localhost HTTP (Windows support matters for Marketplace).
+- **Windows support:** the broker uses a Unix socket path; Windows would need a named
+  pipe (`\\.\pipe\spool-…`), which Node's `net` supports with the same API.
+- **Exited-session cleanup:** session files accumulate; prune old exited ones?

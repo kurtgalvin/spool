@@ -1,30 +1,46 @@
 import { randomUUID } from 'crypto';
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { IpcServer } from './ipc';
+import { BrokerClient } from './brokerClient';
+import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
+import { SessionFiles } from './persistence';
+import { SavedSession, Session, SessionStore } from './sessions';
 import { SessionTreeProvider } from './sessionTree';
-import { Session, SessionStore } from './sessions';
 
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Spool', { log: true });
   context.subscriptions.push(log);
 
-  const store = new SessionStore(log);
+  const storageDir = context.globalStorageUri.fsPath;
+  const store = new SessionStore(log, new SessionFiles(path.join(storageDir, 'sessions')));
+  const loadSessions = () =>
+    store.load(vscode.window.terminals, (terminal) => withTimeout(terminal.processId, 1000), isInOpenFolder);
   context.subscriptions.push(
     store,
     vscode.window.onDidCloseTerminal((terminal) => store.handleTerminalClosed(terminal)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => loadSessions()),
   );
+  // Before connecting, so hooks (including ones the broker replays) find their sessions.
+  await loadSessions();
 
-  const ipc = new IpcServer(
+  const broker = new BrokerClient(
+    brokerSocketPath(),
+    context.asAbsolutePath('out/broker.js'),
+    path.join(storageDir, 'broker.log'),
     (message) => {
       log.debug(`hook from ${message.spoolId}: ${JSON.stringify(message.payload)}`);
       store.handleHook(message);
     },
-    (error) => log.error(error.message),
+    log,
   );
-  await ipc.start();
-  context.subscriptions.push(ipc);
-  log.info(`IPC listening on ${ipc.socketPath}`);
+  context.subscriptions.push(broker);
+  try {
+    await broker.connect();
+  } catch (err) {
+    // Keep the rest of Spool usable; sessions just won't update until the broker is reachable.
+    log.error((err as Error).message);
+  }
 
   const settingsPath = context.asAbsolutePath('resources/spool-hooks.json');
   const hookScriptPath = context.asAbsolutePath('out/hook.js');
@@ -34,7 +50,7 @@ export async function activate(context: vscode.ExtensionContext) {
       cwd,
       env: {
         SPOOL_ID: terminalId,
-        SPOOL_SOCKET: ipc.socketPath,
+        SPOOL_SOCKET: broker.socketPath,
         SPOOL_HOOK_SCRIPT: hookScriptPath,
       },
       iconPath: new vscode.ThemeIcon('sparkle'),
@@ -111,6 +127,19 @@ async function renameTabIfActive(session: Session): Promise<void> {
   if (session.terminal && vscode.window.activeTerminal === session.terminal) {
     await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name: session.name });
   }
+}
+
+/** Exited sessions are shown in windows that have their repo open, so they can be resumed there. */
+function isInOpenFolder(session: SavedSession): boolean {
+  const cwd = session.cwd;
+  return !!cwd && !!vscode.workspace.workspaceFolders?.some((folder) => {
+    const relative = path.relative(folder.uri.fsPath, cwd);
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+}
+
+function withTimeout<T>(promise: Thenable<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))]);
 }
 
 function shellQuote(value: string): string {

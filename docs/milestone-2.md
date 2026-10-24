@@ -20,6 +20,14 @@ Builds on [milestone 1](milestone-1.md); see [design.md](design.md) for the over
    host). Persist session metadata (name, Claude session id, cwd) in workspace state and
    reconnect revived terminals where possible.
 
+   Findings (experiment on **Developer: Reload Window**): terminals survive with the same
+   shell pid and `claude` still running, but `creationOptions.env` comes back empty, so
+   `SPOOL_ID` isn't visible to the extension. A per-workspace socket and workspace state
+   break when a folder is added to the window (the workspace identity changes), so instead:
+   hooks go through a per-user **broker** process (see [design.md](design.md#broker)), and
+   sessions are saved as files in global storage with their shell pid. On load, revived
+   terminals are re-attached by pid; exited sessions for open folders come back resumable.
+
 ## Out of scope
 
 Groups, side threads, resume-after-reload actions, OS-level notifications when VS Code

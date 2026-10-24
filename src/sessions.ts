@@ -22,9 +22,20 @@ export interface Session {
   status: SessionStatus;
   /** Set while the session is running in its terminal. */
   terminal?: vscode.Terminal;
+  /** The terminal's shell process id: the only identifier that survives a window reload. */
+  shellPid?: number;
 }
 
-/** In-memory registry of Spool-launched sessions, kept current from hook events. */
+/** A session as saved to disk; terminals are re-matched by shellPid on load. */
+export type SavedSession = Omit<Session, 'terminal'>;
+
+export interface SessionPersistence {
+  loadAll(): SavedSession[];
+  save(session: SavedSession): void;
+  delete(id: string): void;
+}
+
+/** Registry of this window's sessions, kept current from hook events and saved as they change. */
 export class SessionStore implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
   private readonly terminals = new Map<string, vscode.Terminal>();
@@ -40,7 +51,65 @@ export class SessionStore implements vscode.Disposable {
   private readonly tookOverTerminal = new vscode.EventEmitter<Session>();
   readonly onDidTakeOverTerminal = this.tookOverTerminal.event;
 
-  constructor(private readonly log: vscode.LogOutputChannel) {}
+  constructor(
+    private readonly log: vscode.LogOutputChannel,
+    private readonly persistence: SessionPersistence,
+  ) {
+    this.changed.event((session) => {
+      // remove() fires after deleting; don't write the session back.
+      if (this.sessions.has(session.id)) {
+        // The terminal can't be serialized; load() re-matches it by shellPid.
+        const { terminal, ...saved } = session;
+        this.persistence.save(saved);
+      }
+    });
+  }
+
+  /**
+   * Loads saved sessions this window should show, skipping ones already loaded:
+   * - sessions whose terminal is in this window, matched by shell pid (VS Code doesn't expose a
+   *   revived terminal's env), re-attached with their last known status;
+   * - exited sessions that `isRelevant` (e.g. in an open workspace folder), so they can be resumed.
+   * Sessions still running in another window are left to that window.
+   */
+  async load(
+    terminals: readonly vscode.Terminal[],
+    pidOf: (t: vscode.Terminal) => Promise<number | undefined>,
+    isRelevant: (session: SavedSession) => boolean,
+  ): Promise<void> {
+    const pids = await Promise.all(terminals.map(pidOf));
+    let attached = 0;
+    let loaded = 0;
+    for (const saved of this.persistence.loadAll()) {
+      if (this.sessions.has(saved.id)) {
+        continue;
+      }
+      const session: Session = { ...saved };
+      const wasRunning = saved.status !== 'exited' && saved.shellPid !== undefined;
+      const index = wasRunning ? pids.indexOf(saved.shellPid) : -1;
+      if (index >= 0) {
+        session.terminal = terminals[index];
+        this.terminals.set(session.terminalId, session.terminal);
+        attached++;
+      } else if (wasRunning && isProcessAlive(saved.shellPid!)) {
+        continue;
+      } else if (isRelevant(saved)) {
+        session.status = 'exited';
+      } else {
+        continue;
+      }
+      this.sessions.set(session.id, session);
+      loaded++;
+      this.changed.fire(session);
+    }
+    for (const session of this.sessions.values()) {
+      const n = /^Claude (\d+)$/.exec(session.name);
+      this.defaultNameCount = Math.max(this.defaultNameCount, n ? Number(n[1]) : 0);
+    }
+    if (loaded) {
+      this.log.info(`loaded ${loaded} saved session(s), ${attached} re-attached to running terminals`);
+    }
+  }
 
   get all(): Session[] {
     return [...this.sessions.values()];
@@ -64,6 +133,7 @@ export class SessionStore implements vscode.Disposable {
     this.terminals.set(terminalId, terminal);
     session.terminalId = terminalId;
     session.terminal = terminal;
+    this.recordShellPid(session, terminal);
     this.setStatus(session, 'starting');
   }
 
@@ -101,6 +171,7 @@ export class SessionStore implements vscode.Disposable {
 
   remove(session: Session): void {
     this.sessions.delete(session.id);
+    this.persistence.delete(session.id);
     this.changed.fire(session);
   }
 
@@ -127,8 +198,8 @@ export class SessionStore implements vscode.Disposable {
   private routeHook(terminalId: string, payload: Record<string, unknown>): Session | undefined {
     const terminal = this.terminals.get(terminalId);
     if (!terminal) {
-      // e.g. a terminal left over from a previous extension host.
-      this.log.warn(`hook for unknown terminal ${terminalId}`);
+      // Every window receives every hook; this one belongs to another window.
+      this.log.debug(`ignoring hook for terminal ${terminalId} (not in this window)`);
       return undefined;
     }
     const claudeSessionId = typeof payload.session_id === 'string' ? payload.session_id : undefined;
@@ -156,6 +227,7 @@ export class SessionStore implements vscode.Disposable {
       resumed.terminalId = terminalId;
       resumed.terminal = terminal;
       resumed.status = 'starting';
+      this.recordShellPid(resumed, terminal);
       this.terminalNameChanged.fire(resumed);
       this.tookOverTerminal.fire(resumed);
       return resumed;
@@ -178,9 +250,17 @@ export class SessionStore implements vscode.Disposable {
       terminal,
     };
     this.sessions.set(session.id, session);
+    this.recordShellPid(session, terminal);
     this.log.info(`started ${session.name}`);
     this.changed.fire(session);
     return session;
+  }
+
+  private recordShellPid(session: Session, terminal: vscode.Terminal): void {
+    void terminal.processId.then((pid) => {
+      session.shellPid = pid;
+      this.changed.fire(session);
+    });
   }
 
   private nextDefaultName(): string {
@@ -202,5 +282,15 @@ export class SessionStore implements vscode.Disposable {
     }
     // Fire even without a status change: claudeSessionId may have changed.
     this.changed.fire(session);
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: alive but owned by someone else.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
