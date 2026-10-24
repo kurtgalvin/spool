@@ -59,6 +59,7 @@ it, tagged with `SPOOL_ID`, to the extension's local socket.
 | `SessionStart` | Record/update Claude `session_id` (fires again on `/clear` and resume). |
 | `UserPromptSubmit` | Status → **working** |
 | `Notification` | `permission_prompt` / `elicitation_dialog` → **needs input**; show badge/toast. `idle_prompt` → **idle** (recovers from interrupts, see below). |
+| `PermissionRequest` | **needs input** (fires immediately; `Notification` follows ~3s later) |
 | `PostToolUse` | **needs input** → **working** (the only signal that a permission prompt was approved) |
 | `Stop` | Status → **idle** |
 | `SessionEnd` | Status → **exited** |
@@ -67,7 +68,10 @@ Terminal close events (`onDidCloseTerminal`) are a fallback for marking sessions
 
 **Known gap — interrupts:** cancelling a turn (Esc) fires no hook and writes no marker to
 the transcript (checked on Claude Code 2.1.310), so the session stays **working** until the
-next event. `idle_prompt` is mapped to **idle**, but testing showed it is *not* sent after an
+next event. Rejecting a permission prompt (**No**) is also an interrupt: no hook fires
+(probed `PermissionDenied`, `PostToolUseFailure`, `StopFailure` — none arrive), so the
+session stays **needs input**. That case *does* write `[Request interrupted by user for
+tool use]` to the transcript, so watching the transcript could catch it. `idle_prompt` is mapped to **idle**, but testing showed it is *not* sent after an
 interrupt, so it doesn't fix this. Ideas for later:
 
 - A manual "Mark idle" action on a session.

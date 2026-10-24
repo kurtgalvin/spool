@@ -14,6 +14,9 @@ export function nextStatus(current: SessionStatus, payload: Record<string, unkno
       return 'idle';
     case 'UserPromptSubmit':
       return 'working';
+    case 'PermissionRequest':
+      // Fires as soon as the prompt appears; the matching Notification follows seconds later.
+      return 'needs-input';
     case 'PostToolUse':
       // The only signal that a permission prompt was approved and Claude carried on.
       return current === 'needs-input' ? 'working' : current;
