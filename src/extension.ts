@@ -90,6 +90,16 @@ export async function activate(context: vscode.ExtensionContext) {
       store.resume(session, terminalId, (name) => openTerminal(terminalId, name, session.cwd));
       runClaude(session, '--resume', session.claudeSessionId);
     }),
+    vscode.commands.registerCommand('spool.branchSession', (parent: Session) => {
+      if (!parent.claudeSessionId) {
+        return;
+      }
+      const terminalId = randomUUID();
+      // The fork must run where the parent's conversation lives for --resume to find it.
+      const cwd = parent.cwd ?? parent.launchDir;
+      const thread = store.branch(parent, terminalId, (name) => openTerminal(terminalId, name, cwd));
+      runClaude(thread, '--resume', parent.claudeSessionId, '--fork-session');
+    }),
     vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
       session.terminal?.show();
     }),

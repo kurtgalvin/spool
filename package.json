@@ -51,6 +51,12 @@
         "icon": "$(debug-start)"
       },
       {
+        "command": "spool.branchSession",
+        "title": "Branch Side Thread",
+        "category": "Spool",
+        "icon": "$(git-branch)"
+      },
+      {
         "command": "spool.removeSession",
         "title": "Remove from List",
         "category": "Spool",
@@ -95,13 +101,18 @@
           "group": "inline"
         },
         {
+          "command": "spool.branchSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:.*:conversation$/",
+          "group": "inline@0"
+        },
+        {
           "command": "spool.resumeSession",
-          "when": "view == spool.sessions && viewItem == session:exited:resumable",
+          "when": "view == spool.sessions && viewItem == session:exited:conversation",
           "group": "inline@1"
         },
         {
           "command": "spool.killSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)$/",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)(:|$)/",
           "group": "inline"
         },
         {
@@ -116,12 +127,12 @@
         },
         {
           "command": "spool.markIdle",
-          "when": "view == spool.sessions && viewItem =~ /^session:(working|needs-input)$/",
+          "when": "view == spool.sessions && viewItem =~ /^session:(working|needs-input)(:|$)/",
           "group": "2_status@1"
         },
         {
           "command": "spool.killSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)$/",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)(:|$)/",
           "group": "3_lifecycle@1"
         },
         {
@@ -131,8 +142,13 @@
         },
         {
           "command": "spool.resumeSession",
-          "when": "view == spool.sessions && viewItem == session:exited:resumable",
+          "when": "view == spool.sessions && viewItem == session:exited:conversation",
           "group": "3_lifecycle@0"
+        },
+        {
+          "command": "spool.branchSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:.*:conversation$/",
+          "group": "1_edit@2"
         }
       ],
       "commandPalette": [
@@ -158,6 +174,10 @@
         },
         {
           "command": "spool.resumeSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.branchSession",
           "when": "false"
         }
       ]

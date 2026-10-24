@@ -19,9 +19,13 @@ for the overall design.
    session files, so other windows mirror those files (watching the sessions directory)
    instead of interpreting hooks for terminals they don't own. A 5s check catches windows
    that closed without updating their files; their sessions show as exited.
-3. **Side threads** — **Branch Side Thread** on a session runs
-   `claude --resume <id> --fork-session` in a new terminal; the fork is nested under its
-   parent session.
+3. **Side threads** — **Branch Side Thread** (branch icon, or right-click) on any session
+   with a conversation, running or exited, runs `claude --resume <id> --fork-session` in a
+   new terminal in the parent's folder. The thread is nested under its parent and
+   auto-named from its first prompt; the parent keeps running untouched. Checked on Claude
+   Code 2.1.310: the fork's `SessionStart` has `source: "fork"` and the new session id. If
+   the parent is removed, its threads move up to the group's top level. `/clear` in a
+   thread's terminal starts a new top-level session.
 
 ## Out of scope
 

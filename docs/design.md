@@ -74,7 +74,7 @@ it, tagged with `SPOOL_ID`, to the broker, which forwards it to every window.
 
 | Hook | Effect |
 | --- | --- |
-| `SessionStart` | Record/update Claude `session_id` (fires again on `/clear` and resume). |
+| `SessionStart` | Record/update Claude `session_id` (fires again on `/clear` and resume; a fork's has `source: "fork"` and the new id). |
 | `UserPromptSubmit` | Status → **working** |
 | `Notification` | `permission_prompt` / `elicitation_dialog` → **needs input**; show badge/toast. `idle_prompt` → **idle** (recovers from interrupts, see below). |
 | `PermissionRequest` | **needs input** (fires immediately; `Notification` follows ~3s later) |

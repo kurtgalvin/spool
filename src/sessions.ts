@@ -18,6 +18,8 @@ export interface Session {
   cwd?: string;
   /** Where the session's terminal was started; decides its folder group in the sidebar. */
   launchDir?: string;
+  /** For side threads: the session this one was forked from. */
+  parentId?: string;
   name: string;
   /** 'user' names are never replaced by auto-naming. */
   nameSource: 'default' | 'auto' | 'user';
@@ -170,6 +172,25 @@ export class SessionStore implements vscode.Disposable {
     const terminal = createTerminal(name);
     this.terminals.set(terminalId, terminal);
     return this.startSession(terminalId, terminal, launchDir, name);
+  }
+
+  /**
+   * Registers a side thread of `parent` in a terminal launched via `createTerminal`. The caller
+   * runs the fork; its SessionStart carries the new Claude session id.
+   */
+  branch(parent: Session, terminalId: string, createTerminal: (name: string) => vscode.Terminal): Session {
+    // Nested under its parent in the sidebar; auto-named from its first prompt like any session.
+    const name = 'Side thread';
+    const terminal = createTerminal(name);
+    this.terminals.set(terminalId, terminal);
+    const session = this.startSession(terminalId, terminal, parent.launchDir ?? parent.cwd, name);
+    session.parentId = parent.id;
+    this.changed.fire(session);
+    return session;
+  }
+
+  childrenOf(parent: Session): Session[] {
+    return this.all.filter((s) => s.parentId === parent.id);
   }
 
   /** Re-attaches an exited session to a new terminal launched via `createTerminal`. */

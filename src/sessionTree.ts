@@ -43,11 +43,11 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     if (!element) {
       return this.allGroups();
     }
-    return isGroup(element) ? this.sessionsIn(element) : [];
+    return isGroup(element) ? this.topLevelIn(element) : this.threadsOf(element);
   }
 
   getParent(element: SessionTreeElement): SessionTreeElement | undefined {
-    return isGroup(element) ? undefined : this.groupOf(element);
+    return isGroup(element) ? undefined : (this.parentOf(element) ?? this.groupOf(element));
   }
 
   getTreeItem(element: SessionTreeElement): vscode.TreeItem {
@@ -71,6 +71,21 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
 
   private sessionsIn(group: FolderGroup): Session[] {
     return this.store.all.filter((session) => this.groupOf(session) === group);
+  }
+
+  /** Sessions shown directly under a group: all but side threads whose parent is still listed. */
+  private topLevelIn(group: FolderGroup): Session[] {
+    return this.sessionsIn(group).filter((session) => !this.parentOf(session));
+  }
+
+  private threadsOf(session: Session): Session[] {
+    return this.store.childrenOf(session).filter((thread) => this.parentOf(thread) === session);
+  }
+
+  private parentOf(session: Session): Session | undefined {
+    const parent = session.parentId ? this.store.all.find((s) => s.id === session.parentId) : undefined;
+    // A thread whose parent is in another group (shouldn't happen) is shown at its group's top level.
+    return parent && this.groupOf(parent) === this.groupOf(session) ? parent : undefined;
   }
 
   private group(startDir: string): FolderGroup {
@@ -113,7 +128,10 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
 
   private sessionItem(session: Session): vscode.TreeItem {
     const display = STATUS_DISPLAY[session.status];
-    const item = new vscode.TreeItem(session.name);
+    const item = new vscode.TreeItem(
+      session.name,
+      this.threadsOf(session).length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+    );
     item.id = session.id;
     // Show where in the group the session started, if not at its root.
     const group = this.groupOf(session);
@@ -122,9 +140,10 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     item.iconPath = display.icon;
     // Matched by `viewItem` in package.json menu `when` clauses. Sessions in other windows get
     // no actions: their window owns them.
+    // `:conversation` marks sessions with a Claude conversation to resume or branch from.
     item.contextValue = session.elsewhere
       ? `elsewhere:${session.status}`
-      : `session:${session.status}${session.status === 'exited' && session.claudeSessionId ? ':resumable' : ''}`;
+      : `session:${session.status}${session.claudeSessionId ? ':conversation' : ''}`;
     item.tooltip = [
       `${session.name} — ${display.label}`,
       session.elsewhere && 'Running in another VS Code window',
