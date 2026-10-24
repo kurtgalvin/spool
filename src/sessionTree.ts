@@ -33,6 +33,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Session> {
     item.id = session.spoolId;
     item.description = display.label;
     item.iconPath = display.icon;
+    // Matched by `viewItem` in package.json menu `when` clauses.
+    item.contextValue = `session:${session.status}`;
     item.tooltip = session.claudeSessionId
       ? `${session.name} — ${display.label}\nClaude session ${session.claudeSessionId}`
       : `${session.name} — ${display.label}`;

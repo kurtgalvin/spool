@@ -53,6 +53,24 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
       session.terminal?.show();
     }),
+    vscode.commands.registerCommand('spool.renameSession', async (session: Session) => {
+      const name = (await vscode.window.showInputBox({ prompt: 'Session name', value: session.name }))?.trim();
+      if (!name) {
+        return;
+      }
+      store.rename(session, name);
+      if (session.terminal) {
+        // The rename command only targets the active terminal, so focus it first.
+        session.terminal.show(true);
+        await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name });
+      }
+    }),
+    vscode.commands.registerCommand('spool.killSession', (session: Session) => {
+      // onDidCloseTerminal marks the session exited.
+      session.terminal?.dispose();
+    }),
+    vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
+    vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
   );
 
   const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: new SessionTreeProvider(store) });

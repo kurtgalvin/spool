@@ -48,6 +48,21 @@ export class SessionStore implements vscode.Disposable {
     this.setStatus(session, nextStatus(session.status, payload));
   }
 
+  rename(session: Session, name: string): void {
+    session.name = name;
+    this.changed.fire(session);
+  }
+
+  /** Manual fix for interrupts, which fire no hook and leave a stale status. */
+  markIdle(session: Session): void {
+    this.setStatus(session, 'idle');
+  }
+
+  remove(session: Session): void {
+    this.sessions.delete(session.spoolId);
+    this.changed.fire(session);
+  }
+
   handleTerminalClosed(terminal: vscode.Terminal): void {
     for (const session of this.sessions.values()) {
       if (session.terminal === terminal) {

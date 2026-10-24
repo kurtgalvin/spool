@@ -8,8 +8,9 @@ Builds on [milestone 1](milestone-1.md); see [design.md](design.md) for the over
 1. **Needs-input notifications** — badge on the Spool activity bar icon with the count of
    sessions needing input; a toast with a **Show** button when a session moves to
    **needs input**, skipped if you're already looking at that terminal.
-2. **Rename and kill** — context-menu actions on a session. Rename updates the sidebar
-   (and the terminal tab if the API allows); kill closes the terminal.
+2. **Rename, kill, mark idle** — context-menu actions on a session. Rename updates the
+   sidebar and the terminal tab; kill closes the terminal; **Mark Idle** manually fixes a
+   status left stale by an interrupt; **Remove from List** clears exited sessions.
 3. **Auto-name** — name a session from its first prompt (truncated) unless it has been
    renamed by hand.
 4. **Reload behavior + persistence** — find out what happens to Spool terminals on window

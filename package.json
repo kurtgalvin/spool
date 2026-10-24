@@ -27,6 +27,28 @@
         "command": "spool.focusSession",
         "title": "Focus Session",
         "category": "Spool"
+      },
+      {
+        "command": "spool.renameSession",
+        "title": "Rename\u2026",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.killSession",
+        "title": "Kill",
+        "category": "Spool",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "spool.markIdle",
+        "title": "Mark Idle",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.removeSession",
+        "title": "Remove from List",
+        "category": "Spool",
+        "icon": "$(close)"
       }
     ],
     "viewsContainers": {
@@ -60,9 +82,57 @@
           "group": "navigation"
         }
       ],
+      "view/item/context": [
+        {
+          "command": "spool.killSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)$/",
+          "group": "inline"
+        },
+        {
+          "command": "spool.removeSession",
+          "when": "view == spool.sessions && viewItem == session:exited",
+          "group": "inline"
+        },
+        {
+          "command": "spool.renameSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:/",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "spool.markIdle",
+          "when": "view == spool.sessions && viewItem =~ /^session:(working|needs-input)$/",
+          "group": "2_status@1"
+        },
+        {
+          "command": "spool.killSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)$/",
+          "group": "3_lifecycle@1"
+        },
+        {
+          "command": "spool.removeSession",
+          "when": "view == spool.sessions && viewItem == session:exited",
+          "group": "3_lifecycle@2"
+        }
+      ],
       "commandPalette": [
         {
           "command": "spool.focusSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.renameSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.killSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.markIdle",
+          "when": "false"
+        },
+        {
+          "command": "spool.removeSession",
           "when": "false"
         }
       ]
