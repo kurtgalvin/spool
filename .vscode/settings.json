@@ -1,0 +1,5 @@
+{
+  // The debugger's network view makes the Extension Development Host abort on attach
+  // (node::inspector::NetworkAgent::enable assertion), so launches randomly crash.
+  "debug.javascript.enableNetworkView": false
+}
