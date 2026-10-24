@@ -45,6 +45,12 @@
         "category": "Spool"
       },
       {
+        "command": "spool.resumeSession",
+        "title": "Resume",
+        "category": "Spool",
+        "icon": "$(debug-start)"
+      },
+      {
         "command": "spool.removeSession",
         "title": "Remove from List",
         "category": "Spool",
@@ -84,14 +90,19 @@
       ],
       "view/item/context": [
         {
+          "command": "spool.resumeSession",
+          "when": "view == spool.sessions && viewItem == session:exited:resumable",
+          "group": "inline@1"
+        },
+        {
           "command": "spool.killSession",
           "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)$/",
           "group": "inline"
         },
         {
           "command": "spool.removeSession",
-          "when": "view == spool.sessions && viewItem == session:exited",
-          "group": "inline"
+          "when": "view == spool.sessions && viewItem =~ /^session:exited/",
+          "group": "inline@2"
         },
         {
           "command": "spool.renameSession",
@@ -110,8 +121,13 @@
         },
         {
           "command": "spool.removeSession",
-          "when": "view == spool.sessions && viewItem == session:exited",
+          "when": "view == spool.sessions && viewItem =~ /^session:exited/",
           "group": "3_lifecycle@2"
+        },
+        {
+          "command": "spool.resumeSession",
+          "when": "view == spool.sessions && viewItem == session:exited:resumable",
+          "group": "3_lifecycle@0"
         }
       ],
       "commandPalette": [
@@ -133,6 +149,10 @@
         },
         {
           "command": "spool.removeSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.resumeSession",
           "when": "false"
         }
       ]

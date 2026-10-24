@@ -14,6 +14,8 @@ export interface Session {
   terminalId: string;
   /** From SessionStart. */
   claudeSessionId?: string;
+  /** From SessionStart; resuming must run in the same directory to find the conversation. */
+  cwd?: string;
   name: string;
   /** 'user' names are never replaced by auto-naming. */
   nameSource: 'default' | 'auto' | 'user';
@@ -34,6 +36,9 @@ export class SessionStore implements vscode.Disposable {
   /** Fires when a terminal's tab should show a new name: auto-naming, or another session taking over the terminal. */
   private readonly terminalNameChanged = new vscode.EventEmitter<Session>();
   readonly onDidChangeTerminalName = this.terminalNameChanged.event;
+  /** Fires when a different session takes over an existing terminal (/clear, /resume). */
+  private readonly tookOverTerminal = new vscode.EventEmitter<Session>();
+  readonly onDidTakeOverTerminal = this.tookOverTerminal.event;
 
   constructor(private readonly log: vscode.LogOutputChannel) {}
 
@@ -51,6 +56,15 @@ export class SessionStore implements vscode.Disposable {
     const terminal = createTerminal(name);
     this.terminals.set(terminalId, terminal);
     return this.startSession(terminalId, terminal, name);
+  }
+
+  /** Re-attaches an exited session to a new terminal launched via `createTerminal`. */
+  resume(session: Session, terminalId: string, createTerminal: (name: string) => vscode.Terminal): void {
+    const terminal = createTerminal(session.name);
+    this.terminals.set(terminalId, terminal);
+    session.terminalId = terminalId;
+    session.terminal = terminal;
+    this.setStatus(session, 'starting');
   }
 
   handleHook({ spoolId: terminalId, payload }: HookMessage): void {
@@ -106,6 +120,7 @@ export class SessionStore implements vscode.Disposable {
     this.changed.dispose();
     this.statusChanged.dispose();
     this.terminalNameChanged.dispose();
+    this.tookOverTerminal.dispose();
   }
 
   /** Finds the session a hook belongs to, starting or resuming one on SessionStart. */
@@ -120,6 +135,9 @@ export class SessionStore implements vscode.Disposable {
     const current = this.findByTerminal(terminal);
     if (current && (!current.claudeSessionId || current.claudeSessionId === claudeSessionId)) {
       current.claudeSessionId ??= claudeSessionId;
+      if (typeof payload.cwd === 'string') {
+        current.cwd = payload.cwd;
+      }
       return current;
     }
     if (payload.hook_event_name !== 'SessionStart' || !claudeSessionId) {
@@ -139,11 +157,14 @@ export class SessionStore implements vscode.Disposable {
       resumed.terminal = terminal;
       resumed.status = 'starting';
       this.terminalNameChanged.fire(resumed);
+      this.tookOverTerminal.fire(resumed);
       return resumed;
     }
     const session = this.startSession(terminalId, terminal);
     session.claudeSessionId = claudeSessionId;
+    session.cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
     this.terminalNameChanged.fire(session);
+    this.tookOverTerminal.fire(session);
     return session;
   }
 

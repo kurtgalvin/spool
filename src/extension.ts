@@ -28,24 +28,36 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const settingsPath = context.asAbsolutePath('resources/spool-hooks.json');
   const hookScriptPath = context.asAbsolutePath('out/hook.js');
+  const openTerminal = (terminalId: string, name: string, cwd?: string | vscode.Uri) =>
+    vscode.window.createTerminal({
+      name,
+      cwd,
+      env: {
+        SPOOL_ID: terminalId,
+        SPOOL_SOCKET: ipc.socketPath,
+        SPOOL_HOOK_SCRIPT: hookScriptPath,
+      },
+      iconPath: new vscode.ThemeIcon('sparkle'),
+    });
+  const runClaude = (session: Session, ...args: string[]) => {
+    // Run claude through the user's shell so it gets their normal PATH and profile.
+    session.terminal?.sendText(`claude ${['--settings', settingsPath, ...args].map(shellQuote).join(' ')}`);
+    session.terminal?.show();
+  };
+
   context.subscriptions.push(
     vscode.commands.registerCommand('spool.newSession', () => {
       const terminalId = randomUUID();
-      const session = store.create(terminalId, (name) =>
-        vscode.window.createTerminal({
-          name,
-          cwd: vscode.workspace.workspaceFolders?.[0]?.uri,
-          env: {
-            SPOOL_ID: terminalId,
-            SPOOL_SOCKET: ipc.socketPath,
-            SPOOL_HOOK_SCRIPT: hookScriptPath,
-          },
-          iconPath: new vscode.ThemeIcon('sparkle'),
-        }),
-      );
-      // Run claude through the user's shell so it gets their normal PATH and profile.
-      session.terminal?.sendText(`claude --settings ${shellQuote(settingsPath)}`);
-      session.terminal?.show();
+      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri;
+      runClaude(store.create(terminalId, (name) => openTerminal(terminalId, name, cwd)));
+    }),
+    vscode.commands.registerCommand('spool.resumeSession', (session: Session) => {
+      if (!session.claudeSessionId) {
+        return;
+      }
+      const terminalId = randomUUID();
+      store.resume(session, terminalId, (name) => openTerminal(terminalId, name, session.cwd));
+      runClaude(session, '--resume', session.claudeSessionId);
     }),
     vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
       session.terminal?.show();
@@ -75,14 +87,18 @@ export async function activate(context: vscode.ExtensionContext) {
     view,
     watchNeedsInput(store, view),
     store.onDidChangeTerminalName(renameTabIfActive),
-    // Keep the sidebar selection on the active session, however the terminal was focused.
-    vscode.window.onDidChangeActiveTerminal((terminal) => {
-      const session = store.findByTerminal(terminal);
-      if (session && view.visible) {
-        view.reveal(session, { select: true, focus: false });
-      }
-    }),
+    // Keep the sidebar selection on the active session: when the active terminal changes,
+    // and when a new session takes over the active terminal.
+    vscode.window.onDidChangeActiveTerminal(selectActiveSession),
+    store.onDidTakeOverTerminal(() => selectActiveSession(vscode.window.activeTerminal)),
   );
+
+  function selectActiveSession(terminal: vscode.Terminal | undefined): void {
+    const session = store.findByTerminal(terminal);
+    if (session && view.visible) {
+      view.reveal(session, { select: true, focus: false });
+    }
+  }
 }
 
 export function deactivate() {}

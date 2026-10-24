@@ -12,7 +12,9 @@ Builds on [milestone 1](milestone-1.md); see [design.md](design.md) for the over
    sidebar and the terminal tab; kill closes the terminal; **Mark Idle** manually fixes a
    status left stale by an interrupt; **Remove from List** clears exited sessions.
 3. **Auto-name** — name a session from its first prompt (truncated) unless it has been
-   renamed by hand.
+   renamed by hand. Along the way: `/clear` now exits the old entry and starts a new one in
+   the same terminal, and exited sessions can be **resumed** (`claude --resume`) from the
+   sidebar.
 4. **Reload behavior + persistence** — find out what happens to Spool terminals on window
    reload (VS Code may revive them, but the IPC socket path changes with the extension
    host). Persist session metadata (name, Claude session id, cwd) in workspace state and
