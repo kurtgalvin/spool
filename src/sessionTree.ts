@@ -22,6 +22,11 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<Session> {
     return element ? [] : this.store.all;
   }
 
+  /** Required by TreeView.reveal; sessions are top-level for now. */
+  getParent(): undefined {
+    return undefined;
+  }
+
   getTreeItem(session: Session): vscode.TreeItem {
     const display = STATUS_DISPLAY[session.status];
     const item = new vscode.TreeItem(session.name);

@@ -120,6 +120,7 @@ survives reloads, even though the terminals themselves do not.
 
 ### Later
 
+- Mute notifications per session (or per group), so busy sessions don't keep toasting.
 - Side threads reporting results back to their parent (reusing the reply mechanism).
 - Worktree-per-session for isolated parallel work.
 - tmux backing for sessions that survive VS Code reloads.

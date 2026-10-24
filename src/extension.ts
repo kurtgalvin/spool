@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { IpcServer } from './ipc';
+import { watchNeedsInput } from './notifications';
 import { SessionTreeProvider } from './sessionTree';
 import { Session, SessionStore } from './sessions';
 
@@ -52,7 +53,19 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.focusSession', (session: Session) => {
       session.terminal?.show();
     }),
-    vscode.window.registerTreeDataProvider('spool.sessions', new SessionTreeProvider(store)),
+  );
+
+  const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: new SessionTreeProvider(store) });
+  context.subscriptions.push(
+    view,
+    watchNeedsInput(store, view),
+    // Keep the sidebar selection on the active session, however the terminal was focused.
+    vscode.window.onDidChangeActiveTerminal((terminal) => {
+      const session = store.findByTerminal(terminal);
+      if (session && view.visible) {
+        view.reveal(session, { select: true, focus: false });
+      }
+    }),
   );
 }
 

@@ -17,11 +17,17 @@ export class SessionStore implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
   private readonly changed = new vscode.EventEmitter<Session>();
   readonly onDidChange = this.changed.event;
+  private readonly statusChanged = new vscode.EventEmitter<{ session: Session; previous: SessionStatus }>();
+  readonly onDidChangeStatus = this.statusChanged.event;
 
   constructor(private readonly log: vscode.LogOutputChannel) {}
 
   get all(): Session[] {
     return [...this.sessions.values()];
+  }
+
+  findByTerminal(terminal: vscode.Terminal | undefined): Session | undefined {
+    return terminal && this.all.find((s) => s.terminal === terminal);
   }
 
   add(session: Session): void {
@@ -53,12 +59,15 @@ export class SessionStore implements vscode.Disposable {
 
   dispose(): void {
     this.changed.dispose();
+    this.statusChanged.dispose();
   }
 
   private setStatus(session: Session, status: SessionStatus): void {
-    if (session.status !== status) {
-      this.log.info(`${session.name}: ${session.status} → ${status}`);
+    const previous = session.status;
+    if (previous !== status) {
+      this.log.info(`${session.name}: ${previous} → ${status}`);
       session.status = status;
+      this.statusChanged.fire({ session, previous });
     }
     // Fire even without a status change: claudeSessionId may have changed.
     this.changed.fire(session);
