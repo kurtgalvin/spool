@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BrokerClient } from './brokerClient';
+import { FolderGroup } from './groups';
 import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
 import { SessionFiles } from './persistence';
@@ -62,10 +64,14 @@ export async function activate(context: vscode.ExtensionContext) {
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('spool.newSession', () => {
+    // From a group's row: start in that group's folder. Otherwise in a workspace folder.
+    vscode.commands.registerCommand('spool.newSession', async (group?: FolderGroup) => {
+      const launchDir = group?.dir ?? (await pickWorkspaceFolder());
+      if (!launchDir) {
+        return;
+      }
       const terminalId = randomUUID();
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri;
-      runClaude(store.create(terminalId, (name) => openTerminal(terminalId, name, cwd)));
+      runClaude(store.create(terminalId, launchDir, (name) => openTerminal(terminalId, name, launchDir)));
     }),
     vscode.commands.registerCommand('spool.resumeSession', (session: Session) => {
       if (!session.claudeSessionId) {
@@ -127,6 +133,19 @@ async function renameTabIfActive(session: Session): Promise<void> {
   if (session.terminal && vscode.window.activeTerminal === session.terminal) {
     await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name: session.name });
   }
+}
+
+/**
+ * The folder for a new session: the only workspace folder, the one picked when there are
+ * several (undefined if the pick is cancelled), or home when no folder is open — where a
+ * terminal would start anyway.
+ */
+async function pickWorkspaceFolder(): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length <= 1) {
+    return folders[0]?.uri.fsPath ?? os.homedir();
+  }
+  return (await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Start the session in…' }))?.uri.fsPath;
 }
 
 /** Exited sessions are shown in windows that have their repo open, so they can be resumed there. */

@@ -11,7 +11,7 @@ session is working, which is waiting on you, and how sessions relate to each oth
 
 - See every Claude Code session at a glance, with live status.
 - Get notified when a session needs input.
-- Organize sessions into groups.
+- Organize sessions by the folder (repo) they run in.
 - Branch a "side thread" off an existing session without disturbing it.
 
 Primary user is me (personal tool), but design choices should not block a future
@@ -26,6 +26,7 @@ Marketplace release — e.g. never modify the user's global Claude Code config.
 | How hooks are installed | Per-launch via `claude --settings <spool-hooks.json>` | Hooks only apply to Spool-launched sessions; global `~/.claude/settings.json` is untouched. |
 | Side threads | `claude --resume <id> --fork-session` | Native fork: new session with the parent's full history, parent unaffected. |
 | Hook transport | One per-user socket owned by a background **broker** process | Hooks need one stable address regardless of which window or workspace launched the session; only one process can listen on a socket, and windows reload. |
+| Sidebar organization | Group by folder: nearest git repo root, else the start folder | Matches how work is split across repos; a parent folder of several repos gets its own group. No setup. |
 | Persistence | One JSON file per session in global storage | Survives reloads and workspace identity changes (adding a folder to a window); windows only write their own sessions. |
 
 ## Architecture
@@ -111,15 +112,15 @@ interface Session {
   nameSource: 'default' | 'auto' | 'user';
   status: 'starting' | 'working' | 'needs-input' | 'idle' | 'exited';
   parentId?: string;          // set for side threads
-  groupId?: string;
   cwd?: string;
+  launchDir?: string;         // where the terminal started; decides the folder group
   terminal?: vscode.Terminal;
   shellPid?: number;          // the only terminal identifier that survives a reload
 }
 
-interface Group {
-  id: string;
-  name: string;
+interface FolderGroup {       // derived, not stored
+  dir: string;                // nearest git root of launchDir, else launchDir
+  isRepo: boolean;
 }
 ```
 
@@ -141,7 +142,8 @@ and skips sessions whose shell is still alive elsewhere (running in another wind
 - **New session** command.
 - **Live status** icons from hooks.
 - **Notifications** when a session needs input (badge on the view + toast).
-- **Groups**: user-created folders; move sessions between them.
+- **Folder groups**: sessions grouped by repo (or start folder), each with a **+** to
+  start a session there. (Replaces the original plan of user-created groups.)
 - **Side threads**: "Branch side thread" on a session forks it; the fork is shown nested
   under its parent.
 
@@ -167,11 +169,12 @@ and skips sessions whose shell is still alive elsewhere (running in another wind
 
 ## Open questions
 
-- **Groups:** purely visual in v1, or also group actions (close all, broadcast prompt, combined status)?
+- **Groups:** folder groups are automatic. Add named groups later? Group actions (close
+  all, broadcast prompt)?
 - **Side-thread nesting:** full tree, or one level deep?
 - **Scope:** each window shows its own running sessions plus exited ones for its open
-  folders. Should it also show other windows' running sessions (read-only, can't focus)?
-  The broker would make a shared view possible.
+  folders. Planned (milestone 3): also show other windows' running sessions under their
+  folders, mirrored from their session files.
 - **Comment routing (v2):** which session receives a comment — picker, last-focused, or pinned per file/worktree?
 - **Comment delivery (v2):** send each comment immediately, or batch as a review?
 - **Getting results back:** what form should a "result" take — transcript excerpt, summary, diff?

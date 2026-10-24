@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { Session, SessionStore } from './sessions';
+import { SessionTreeElement } from './sessionTree';
 
 /**
  * Surfaces sessions that need input: a count badge on the Sessions view (shown on the
  * activity bar icon) and a toast when a session starts waiting.
  */
-export function watchNeedsInput(store: SessionStore, view: vscode.TreeView<Session>): vscode.Disposable {
+export function watchNeedsInput(store: SessionStore, view: vscode.TreeView<SessionTreeElement>): vscode.Disposable {
   const updateBadge = () => {
     const count = store.all.filter((s) => s.status === 'needs-input').length;
     view.badge = count

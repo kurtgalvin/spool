@@ -16,6 +16,8 @@ export interface Session {
   claudeSessionId?: string;
   /** From SessionStart; resuming must run in the same directory to find the conversation. */
   cwd?: string;
+  /** Where the session's terminal was started; decides its folder group in the sidebar. */
+  launchDir?: string;
   name: string;
   /** 'user' names are never replaced by auto-naming. */
   nameSource: 'default' | 'auto' | 'user';
@@ -119,12 +121,12 @@ export class SessionStore implements vscode.Disposable {
     return terminal && this.all.find((s) => s.terminal === terminal);
   }
 
-  /** Launches a terminal via `createTerminal` (given the session's name) and registers the session in it. */
-  create(terminalId: string, createTerminal: (name: string) => vscode.Terminal): Session {
+  /** Launches a terminal in `launchDir` via `createTerminal` (given the session's name) and registers the session in it. */
+  create(terminalId: string, launchDir: string, createTerminal: (name: string) => vscode.Terminal): Session {
     const name = this.nextDefaultName();
     const terminal = createTerminal(name);
     this.terminals.set(terminalId, terminal);
-    return this.startSession(terminalId, terminal, name);
+    return this.startSession(terminalId, terminal, launchDir, name);
   }
 
   /** Re-attaches an exited session to a new terminal launched via `createTerminal`. */
@@ -232,18 +234,27 @@ export class SessionStore implements vscode.Disposable {
       this.tookOverTerminal.fire(resumed);
       return resumed;
     }
-    const session = this.startSession(terminalId, terminal);
+    const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
+    // Same terminal, so same folder as the session it replaces (usually already detached by SessionEnd).
+    const previous = this.all.reverse().find((s) => s.terminalId === terminalId);
+    const session = this.startSession(terminalId, terminal, previous?.launchDir ?? cwd);
     session.claudeSessionId = claudeSessionId;
-    session.cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
+    session.cwd = cwd;
     this.terminalNameChanged.fire(session);
     this.tookOverTerminal.fire(session);
     return session;
   }
 
-  private startSession(terminalId: string, terminal: vscode.Terminal, name = this.nextDefaultName()): Session {
+  private startSession(
+    terminalId: string,
+    terminal: vscode.Terminal,
+    launchDir: string | undefined,
+    name = this.nextDefaultName(),
+  ): Session {
     const session: Session = {
       id: randomUUID(),
       terminalId,
+      launchDir,
       name,
       nameSource: 'default',
       status: 'starting',

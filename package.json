@@ -90,6 +90,11 @@
       ],
       "view/item/context": [
         {
+          "command": "spool.newSession",
+          "when": "view == spool.sessions && viewItem == group",
+          "group": "inline"
+        },
+        {
           "command": "spool.resumeSession",
           "when": "view == spool.sessions && viewItem == session:exited:resumable",
           "group": "inline@1"
