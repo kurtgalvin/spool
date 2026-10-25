@@ -168,11 +168,10 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 
 ### v2
 
-- **Inline code comments** via the VS Code Comments API: highlight code, comment, send to
-  a session. Likely a "review mode" that batches comments across files and submits them
-  as one prompt with file paths, line ranges, and selected code.
-- **Replies in threads**: on `Stop`, post the hook payload's `last_assistant_message`
-  back into the comment thread (no transcript parsing needed).
+- **Inline code comments** ([milestone 4](milestone-4.md)): comment on code in any file,
+  queue comments on a session or ask in a read-only side thread; Claude reads them and
+  replies per thread through a Spool MCP server. A comments view shows threads as leaves
+  under their files.
 - **Resume group** after reload: relaunch every session in a group with `--resume`.
 
 ### Later
@@ -191,8 +190,6 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 - **Side-thread nesting:** full tree, or one level deep?
 - **Scope:** each window shows every running session (other windows' read-only) plus
   exited ones for its open folders. Should exited sessions from other folders show too?
-- **Comment routing (v2):** which session receives a comment — picker, last-focused, or pinned per file/worktree?
-- **Comment delivery (v2):** send each comment immediately, or batch as a review?
 - **Getting results back:** what form should a "result" take — transcript excerpt, summary, diff?
 - **Naming:** auto-name sessions from the first prompt? (`UserPromptSubmit` carries `prompt`.)
   The transcript also stores a generated title (`{"type": "ai-title", "aiTitle": "..."}`),
