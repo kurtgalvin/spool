@@ -164,6 +164,8 @@ Sessions whose file disappears (removed in another window) are dropped.
 
 ## Roadmap
 
+Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
+
 ### v2
 
 - **Inline code comments** via the VS Code Comments API: highlight code, comment, send to
