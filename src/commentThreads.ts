@@ -196,41 +196,91 @@ function stateFor(comment: CodeComment): vscode.CommentThreadState | undefined {
   }
 }
 
-/**
- * Picks the session to queue a comment on `file` on, from the running sessions in this window.
- * Sessions in the file's folder group are listed first; the only one there is marked suggested.
- * With `allowDraft`, the list ends with saving it as a draft instead.
- */
-export async function pickSessionFor(
-  file: string,
-  sessions: SessionStore,
-  allowDraft: boolean,
-): Promise<Session | 'draft' | undefined> {
-  const running = sessions.all.filter((session) => session.terminal && session.status !== 'exited');
+type SessionItem = vscode.QuickPickItem & { session: Session };
+
+/** Items for `candidates`, those in `file`'s folder group first; the only one there is marked suggested. */
+function sessionItems(file: string, candidates: Session[]): SessionItem[] {
   const fileGroup = groupFor(path.dirname(file)).dir;
   const groupOf = (session: Session) => {
     const dir = session.launchDir ?? session.cwd;
     return dir === undefined ? undefined : groupFor(dir).dir;
   };
-  const inGroup = running.filter((session) => groupOf(session) === fileGroup);
+  const inGroup = candidates.filter((session) => groupOf(session) === fileGroup);
   const suggested = inGroup.length === 1 ? inGroup[0] : undefined;
-  const ordered = [...inGroup, ...running.filter((session) => !inGroup.includes(session))];
-  const items: (vscode.QuickPickItem & { target: Session | 'draft' })[] = ordered.map((session) => {
+  return [...inGroup, ...candidates.filter((session) => !inGroup.includes(session))].map((session) => {
     const group = groupOf(session);
     return {
       label: session.name,
       description: [session.status, group && path.basename(group), session === suggested && 'suggested']
         .filter(Boolean)
         .join(' · '),
-      target: session,
+      session,
     };
   });
-  if (allowDraft) {
-    items.push({ label: '$(edit) Save as Draft', description: 'queue it later', target: 'draft' });
-  }
+}
+
+function runningSessions(sessions: SessionStore): Session[] {
+  return sessions.all.filter((session) => session.terminal && session.status !== 'exited');
+}
+
+/** Picks one of this window's running sessions for a comment on `file`. */
+export async function pickSession(file: string, sessions: SessionStore): Promise<Session | undefined> {
+  const items = sessionItems(file, runningSessions(sessions));
   if (!items.length) {
-    vscode.window.showInformationMessage('No running Claude sessions in this window to queue the comment on.');
+    vscode.window.showInformationMessage('No running Claude sessions in this window.');
     return undefined;
   }
-  return (await vscode.window.showQuickPick(items, { placeHolder: 'Queue the comment on…' }))?.target;
+  return (await vscode.window.showQuickPick(items, { placeHolder: 'Send the comment to…' }))?.session;
+}
+
+export type Destination =
+  | { kind: 'session'; session: Session }
+  /** `parent` is undefined when it still has to be picked. */
+  | { kind: 'branch'; parent?: Session }
+  | { kind: 'new'; dir: string }
+  | { kind: 'draft' };
+
+/**
+ * **More…** under a new comment: branch from `current`, start a new session in the file's
+ * folder group, save a draft, or queue on any running session.
+ */
+export async function pickDestination(
+  file: string,
+  sessions: SessionStore,
+  current: Session | undefined,
+): Promise<Destination | undefined> {
+  const group = groupFor(path.dirname(file)).dir;
+  const parent = current?.claudeSessionId ? current : undefined;
+  const items: (vscode.QuickPickItem & { destination?: Destination })[] = [
+    {
+      label: parent ? `$(git-branch) Branch from ${parent.name}` : '$(git-branch) Branch from…',
+      description: 'side thread with its context',
+      destination: { kind: 'branch', parent },
+    },
+    {
+      label: `$(add) New session in ${path.basename(group) || group}`,
+      description: 'no context',
+      destination: { kind: 'new', dir: group },
+    },
+    { label: '$(edit) Save as draft', destination: { kind: 'draft' } },
+  ];
+  const running = sessionItems(file, runningSessions(sessions));
+  if (running.length) {
+    items.push({ label: 'Queue on a running session', kind: vscode.QuickPickItemKind.Separator });
+    items.push(...running.map((item) => ({ ...item, destination: { kind: 'session' as const, session: item.session } })));
+  }
+  return (await vscode.window.showQuickPick(items, { placeHolder: 'Where should the comment go?' }))?.destination;
+}
+
+/** Picks a session to branch a side thread from: any of this window's sessions with a conversation. */
+export async function pickBranchParent(file: string, sessions: SessionStore): Promise<Session | undefined> {
+  const items = sessionItems(
+    file,
+    sessions.all.filter((session) => session.claudeSessionId && !session.elsewhere),
+  );
+  if (!items.length) {
+    vscode.window.showInformationMessage('No sessions with a conversation to branch from.');
+    return undefined;
+  }
+  return (await vscode.window.showQuickPick(items, { placeHolder: 'Branch a side thread from…' }))?.session;
 }

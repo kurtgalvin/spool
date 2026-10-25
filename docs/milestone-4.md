@@ -118,7 +118,7 @@ Queuing lets several comments go to one session as a single review.
    the one-line prompt as its first message, so nothing is typed into the terminal. With no
    current session, **Branch from…** asks which session to branch. These sessions are
    named from their comment (e.g. "Branch: what does markSent do") instead of from the
-   prompt.
+   prompt. Checked in VS Code: both start and answer in the thread.
 
    Open: run branches as a background `claude -p --resume <parent> --fork-session` (no
    terminal, prompt as an argument) with **Continue in Terminal** to pick one up

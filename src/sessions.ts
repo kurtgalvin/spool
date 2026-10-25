@@ -167,23 +167,40 @@ export class SessionStore implements vscode.Disposable {
   }
 
   /** Launches a terminal in `launchDir` via `createTerminal` (given the session's name) and registers the session in it. */
-  create(terminalId: string, launchDir: string, createTerminal: (name: string) => vscode.Terminal): Session {
-    const name = this.nextDefaultName();
-    const terminal = createTerminal(name);
+  /** With a `name`, the session isn't auto-named from its first prompt. */
+  create(
+    terminalId: string,
+    launchDir: string,
+    createTerminal: (name: string) => vscode.Terminal,
+    name?: string,
+  ): Session {
+    const sessionName = name ?? this.nextDefaultName();
+    const terminal = createTerminal(sessionName);
     this.terminals.set(terminalId, terminal);
-    return this.startSession(terminalId, terminal, launchDir, name);
+    return this.startSession(terminalId, terminal, launchDir, sessionName, name ? 'auto' : 'default');
   }
 
   /**
    * Registers a side thread of `parent` in a terminal launched via `createTerminal`. The caller
    * runs the fork; its SessionStart carries the new Claude session id.
    */
-  branch(parent: Session, terminalId: string, createTerminal: (name: string) => vscode.Terminal): Session {
-    // Nested under its parent in the sidebar; auto-named from its first prompt like any session.
-    const name = 'Side thread';
-    const terminal = createTerminal(name);
+  /** Nested under its parent in the sidebar. Auto-named from its first prompt unless given a `name`. */
+  branch(
+    parent: Session,
+    terminalId: string,
+    createTerminal: (name: string) => vscode.Terminal,
+    name?: string,
+  ): Session {
+    const sessionName = name ?? 'Side thread';
+    const terminal = createTerminal(sessionName);
     this.terminals.set(terminalId, terminal);
-    const session = this.startSession(terminalId, terminal, parent.launchDir ?? parent.cwd, name);
+    const session = this.startSession(
+      terminalId,
+      terminal,
+      parent.launchDir ?? parent.cwd,
+      sessionName,
+      name ? 'auto' : 'default',
+    );
     session.parentId = parent.id;
     this.changed.fire(session);
     return session;
@@ -314,13 +331,14 @@ export class SessionStore implements vscode.Disposable {
     terminal: vscode.Terminal,
     launchDir: string | undefined,
     name = this.nextDefaultName(),
+    nameSource: Session['nameSource'] = 'default',
   ): Session {
     const session: Session = {
       id: randomUUID(),
       terminalId,
       launchDir,
       name,
-      nameSource: 'default',
+      nameSource,
       status: 'starting',
       terminal,
     };

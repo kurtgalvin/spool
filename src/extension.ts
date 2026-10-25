@@ -4,7 +4,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { BrokerClient } from './brokerClient';
 import { CodeComment, CommentStore } from './comments';
-import { CommentThreads, pickSessionFor } from './commentThreads';
+import { CommentThreads, pickBranchParent, pickDestination, pickSession } from './commentThreads';
+import { nameFromPrompt } from './naming';
 import { FolderGroup } from './groups';
 import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
@@ -137,30 +138,48 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
     vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
 
-    // Comments. Send, Queue and Queue On are the buttons under a new thread's input box.
+    // Comments. Send, Queue and More are the buttons under a new thread's input box; with no
+    // current session, Send and Queue ask for one. Cancelling a pick leaves the input as it is.
     vscode.commands.registerCommand('spool.sendComment', async (reply: vscode.CommentReply) => {
-      const target = threads.queueTarget ?? (await pickSessionFor(reply.thread.uri.fsPath, store, false));
-      if (target && target !== 'draft') {
-        await send(target, [await threads.create(reply, target)]);
+      const session = threads.queueTarget ?? (await pickSession(reply.thread.uri.fsPath, store));
+      if (session) {
+        await send(session, [await threads.create(reply, session)]);
       }
     }),
     vscode.commands.registerCommand('spool.queueComment', async (reply: vscode.CommentReply) => {
-      const target = threads.queueTarget ?? (await pickSessionFor(reply.thread.uri.fsPath, store, true));
-      // Cancelling the pick leaves the input as it is.
-      if (target) {
-        await threads.create(reply, target === 'draft' ? undefined : target);
+      const session = threads.queueTarget ?? (await pickSession(reply.thread.uri.fsPath, store));
+      if (session) {
+        await threads.create(reply, session);
       }
     }),
-    vscode.commands.registerCommand('spool.queueCommentOn', async (reply: vscode.CommentReply) => {
-      const target = await pickSessionFor(reply.thread.uri.fsPath, store, true);
-      if (target) {
-        await threads.create(reply, target === 'draft' ? undefined : target);
+    vscode.commands.registerCommand('spool.moreComment', async (reply: vscode.CommentReply) => {
+      const file = reply.thread.uri.fsPath;
+      const destination = await pickDestination(file, store, threads.queueTarget);
+      if (destination?.kind === 'session') {
+        await threads.create(reply, destination.session);
+      } else if (destination?.kind === 'draft') {
+        await threads.create(reply, undefined);
+      } else if (destination?.kind === 'new') {
+        const terminalId = randomUUID();
+        const name = nameFromPrompt(reply.text);
+        const session = store.create(terminalId, destination.dir, (n) => openTerminal(terminalId, n, destination.dir), name);
+        await startWithComment(session, reply);
+      } else if (destination?.kind === 'branch') {
+        const parent = destination.parent ?? (await pickBranchParent(file, store));
+        if (!parent?.claudeSessionId) {
+          return;
+        }
+        const terminalId = randomUUID();
+        const cwd = parent.cwd ?? parent.launchDir;
+        const name = nameFromPrompt(`Branch: ${reply.text}`);
+        const thread = store.branch(parent, terminalId, (n) => openTerminal(terminalId, n, cwd), name);
+        await startWithComment(thread, reply, '--resume', parent.claudeSessionId, '--fork-session');
       }
     }),
     vscode.commands.registerCommand('spool.queueDraft', async (thread: vscode.CommentThread) => {
       const comment = threads.commentFor(thread);
-      const session = comment && (await pickSessionFor(comment.file, store, false));
-      if (comment && session && session !== 'draft') {
+      const session = comment && (await pickSession(comment.file, store));
+      if (comment && session) {
         comments.queue(comment, session.id);
       }
     }),
@@ -231,11 +250,17 @@ export async function activate(context: vscode.ExtensionContext) {
       return;
     }
     comments.markSent(toSend);
-    const count = toSend.length === 1 ? 'a code comment' : `${toSend.length} code comments`;
-    await typeIntoClaude(
-      session.terminal,
-      `Spool: you have ${count} from me. Read them with the spool get_comments tool and reply to each.`,
-    );
+    await typeIntoClaude(session.terminal, commentsPrompt(toSend.length));
+  }
+
+  /**
+   * Starts Claude in a session just created for a comment, with the prompt about it as the
+   * first message: passed on the command line, so nothing is typed into the TUI.
+   */
+  async function startWithComment(session: Session, reply: vscode.CommentReply, ...args: string[]): Promise<void> {
+    const comment = await threads.create(reply, session);
+    comments.markSent([comment]);
+    runClaude(session, ...args, commentsPrompt(1));
   }
 
   function selectActiveSession(terminal: vscode.Terminal | undefined): void {
@@ -278,6 +303,11 @@ function isInOpenFolder(session: SavedSession): boolean {
     const relative = path.relative(folder.uri.fsPath, cwd);
     return !relative.startsWith('..') && !path.isAbsolute(relative);
   });
+}
+
+function commentsPrompt(count: number): string {
+  const comments = count === 1 ? 'a code comment' : `${count} code comments`;
+  return `Spool: you have ${comments} from me. Read them with the spool get_comments tool and reply to each.`;
 }
 
 /**

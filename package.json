@@ -96,8 +96,8 @@
         "icon": "$(send)"
       },
       {
-        "command": "spool.queueCommentOn",
-        "title": "Queue on…",
+        "command": "spool.moreComment",
+        "title": "More…",
         "category": "Spool"
       },
       {
@@ -265,7 +265,7 @@
           "when": "false"
         },
         {
-          "command": "spool.queueCommentOn",
+          "command": "spool.moreComment",
           "when": "false"
         },
         {
@@ -301,7 +301,7 @@
           "group": "inline@2"
         },
         {
-          "command": "spool.queueCommentOn",
+          "command": "spool.moreComment",
           "when": "commentController == spool && commentThreadIsEmpty",
           "group": "inline@3"
         },
