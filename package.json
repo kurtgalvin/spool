@@ -30,7 +30,7 @@
       },
       {
         "command": "spool.renameSession",
-        "title": "Rename…",
+        "title": "Rename\u2026",
         "category": "Spool"
       },
       {
@@ -92,13 +92,6 @@
       }
     ],
     "menus": {
-      "view/title": [
-        {
-          "command": "spool.newSession",
-          "when": "view == spool.sessions",
-          "group": "navigation"
-        }
-      ],
       "view/item/context": [
         {
           "command": "spool.newSession",
