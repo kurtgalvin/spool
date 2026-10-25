@@ -2,7 +2,7 @@
 
 A VS Code extension for managing multiple Claude Code terminal sessions: live status from
 Claude Code hooks, sessions grouped by folder across windows, needs-input notifications, and
-side threads. See [docs/design.md](docs/design.md).
+side threads. See `docs/design.md` in the repo.
 
 ## Install locally
 
