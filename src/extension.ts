@@ -3,10 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BrokerClient } from './brokerClient';
+import { CodeComment, CommentStore } from './comments';
+import { CommentThreads, pickSessionFor } from './commentThreads';
 import { FolderGroup } from './groups';
 import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
-import { SessionFiles } from './persistence';
+import { JsonFiles } from './persistence';
 import { SavedSession, Session, SessionStore } from './sessions';
 import { SessionTreeProvider } from './sessionTree';
 
@@ -17,7 +19,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(log);
 
   const storageDir = context.globalStorageUri.fsPath;
-  const sessionFiles = new SessionFiles(path.join(storageDir, 'sessions'));
+  const sessionFiles = new JsonFiles<SavedSession>(path.join(storageDir, 'sessions'));
   const store = new SessionStore(log, sessionFiles);
   const syncSessions = () =>
     store.sync(vscode.window.terminals, (terminal) => withTimeout(terminal.processId, 1000), isInOpenFolder);
@@ -34,6 +36,11 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   // Before connecting, so hooks (including ones the broker replays) find their sessions.
   await syncSessions();
+
+  const commentFiles = new JsonFiles<CodeComment>(path.join(storageDir, 'comments'));
+  const comments = new CommentStore(commentFiles);
+  const threads = new CommentThreads(comments, store);
+  context.subscriptions.push(comments, threads, commentFiles.watch(() => comments.sync()));
 
   const broker = new BrokerClient(
     brokerSocketPath(),
@@ -123,9 +130,38 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.restartBroker', () => broker.restartBroker()),
     vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
     vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
+
+    // Comments. The first two are the buttons under a new thread's input box.
+    vscode.commands.registerCommand('spool.queueComment', async (reply: vscode.CommentReply) => {
+      // Cancelling the pick leaves the input as it is.
+      const session = await pickSessionFor(reply.thread.uri.fsPath, store);
+      if (session) {
+        await threads.create(reply, session);
+      }
+    }),
+    vscode.commands.registerCommand('spool.saveCommentDraft', (reply: vscode.CommentReply) =>
+      threads.create(reply, undefined),
+    ),
+    vscode.commands.registerCommand('spool.queueDraft', async (thread: vscode.CommentThread) => {
+      const comment = threads.commentFor(thread);
+      const session = comment && (await pickSessionFor(comment.file, store));
+      if (comment && session) {
+        comments.queue(comment, session.id);
+      }
+    }),
+    vscode.commands.registerCommand('spool.deleteComment', (thread: vscode.CommentThread) => {
+      const comment = threads.commentFor(thread);
+      if (comment) {
+        comments.delete(comment);
+      }
+    }),
+    // Opens the comment input on the selection; VS Code asks which extension if several offer comments.
+    vscode.commands.registerCommand('spool.commentOnSelection', () =>
+      vscode.commands.executeCommand('workbench.action.addComment'),
+    ),
   );
 
-  const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: new SessionTreeProvider(store) });
+  const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: new SessionTreeProvider(store, comments) });
   context.subscriptions.push(
     view,
     watchNeedsInput(store, view),

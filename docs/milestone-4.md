@@ -30,13 +30,17 @@ interrupting its work.
 ## Steps
 
 1. **Comments and the queue.** A comment controller allows commenting on every `file:`
-   document, including the current side of a diff. Add a comment from the gutter **+** or
-   on a selection. Its actions are **Queue on Session** (Change), **Ask**, and **Fresh**.
-   The target session defaults to the only live session in the file's folder group,
-   otherwise you pick one. Comments are saved as files in global storage (one per comment,
-   like session files), with the file, line range, a snapshot of the selected code, the
-   text, the intent, the target `SPOOL_ID`, the status, and the replies. A session row shows
-   its queued count, and **Send Comments** on the row sends them.
+   document, including the current side of a diff. Add a comment from the gutter **+**, or
+   select code and use **Comment for Claude** in the editor's context menu. Under the input,
+   **Queue on Session** attaches it to a session; **Save as Draft** keeps it unattached. You
+   pick the target from this window's running sessions; the file's folder group's sessions
+   are listed first, and if it has only one it's marked **suggested** and preselected. A thread's title bar has
+   **Queue on Session…** (for drafts, or to move a queued comment) and **Delete**; its label
+   shows the status and session. Comments are saved as files in global storage (one per
+   comment, like session files; every window shows them all), with the file, line range, a
+   snapshot of the selected code, the text, the status, the session, and the replies. A
+   session row shows its queued count. **Ask** and **Fresh** come with steps 3 and 4,
+   **Send Comments** with step 3.
 2. **Comments view.** A second view in the Spool sidebar shows comment threads as a file
    tree: folder group → folders → file → **threads as the leaves**. Single-child folder
    chains are compacted like the Explorer does. Each thread shows its status icon, the first
@@ -92,5 +96,15 @@ what was meant).
   whose hooks have never fired, rather than claiming read-only?
 - **Comments on exited sessions:** resume the session to deliver them, or move them back to
   draft?
+- **Default routing:** a comment's `sessionId` decides where it goes. The picker always
+  shows, suggesting the only running session in the file's group. Also suggest the
+  last-focused or last-picked session?
+- **After `/clear`:** a new session starts in the same terminal. Do the old session's
+  queued comments move to it?
+- **Comment UI:** intents as buttons under the input (Queue / Ask / Draft); turn on the
+  reply box so you can follow up in a thread (follow-ups go to the thread's session); show
+  Claude's icon on its replies; let you edit drafts and queued comments; let Claude leave
+  comments itself (a `comment(file, lines, text)` tool) for review passes.
+- **Row text:** "idle · 1 comment" gets truncated in a narrow sidebar; shorten it, or use an icon?
 - **Clearing old threads:** delete resolved threads after a while, or keep them until
   you clear them?

@@ -1,40 +1,38 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { SavedSession, SessionPersistence } from './sessions';
-
-/** Writes come in bursts (temp file, then rename; several sessions at once). */
+/** Writes come in bursts (temp file, then rename; several files at once). */
 const WATCH_DEBOUNCE_MS = 100;
 
 /**
- * Saves each session as its own JSON file in the extension's global storage. One file per
- * session means windows only ever write their own sessions, and the files don't depend on the
- * workspace's identity (which changes when a folder is added to a window). Other windows
- * watch the directory to mirror sessions they don't run.
+ * Saves each item (a session, a comment) as its own JSON file in a directory in the
+ * extension's global storage. One file per item means windows only write what they changed,
+ * and the files don't depend on the workspace's identity (which changes when a folder is added
+ * to a window). Other windows watch the directory to mirror items they don't own.
  */
-export class SessionFiles implements SessionPersistence {
+export class JsonFiles<T extends { id: string }> {
   constructor(private readonly dir: string) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  loadAll(): SavedSession[] {
-    const sessions: SavedSession[] = [];
+  loadAll(): T[] {
+    const items: T[] = [];
     for (const file of fs.readdirSync(this.dir)) {
       if (!file.endsWith('.json')) {
         continue;
       }
       try {
-        sessions.push(JSON.parse(fs.readFileSync(path.join(this.dir, file), 'utf8')));
+        items.push(JSON.parse(fs.readFileSync(path.join(this.dir, file), 'utf8')));
       } catch {
         // A file mid-write by another window, or corrupt; skip it.
       }
     }
-    return sessions;
+    return items;
   }
 
-  save(session: SavedSession): void {
+  save(item: T): void {
     // Write then rename, so another window never reads a half-written file.
-    const file = this.fileFor(session.id);
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify(session));
+    const file = this.fileFor(item.id);
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(item));
     fs.renameSync(`${file}.tmp`, file);
   }
 
@@ -42,7 +40,7 @@ export class SessionFiles implements SessionPersistence {
     fs.rmSync(this.fileFor(id), { force: true });
   }
 
-  /** Calls `onChange` (debounced) when any session file changes, including this window's own writes. */
+  /** Calls `onChange` (debounced) when any file changes, including this window's own writes. */
   watch(onChange: () => void): { dispose(): void } {
     let timer: NodeJS.Timeout | undefined;
     const watcher = fs.watch(this.dir, () => {

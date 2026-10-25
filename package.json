@@ -30,7 +30,7 @@
       },
       {
         "command": "spool.renameSession",
-        "title": "Rename\u2026",
+        "title": "Rename…",
         "category": "Spool"
       },
       {
@@ -65,6 +65,33 @@
       {
         "command": "spool.restartBroker",
         "title": "Restart Broker",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.queueComment",
+        "title": "Queue on Session",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.saveCommentDraft",
+        "title": "Save as Draft",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.queueDraft",
+        "title": "Queue on Session…",
+        "category": "Spool",
+        "icon": "$(send)"
+      },
+      {
+        "command": "spool.deleteComment",
+        "title": "Delete Comment",
+        "category": "Spool",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "spool.commentOnSelection",
+        "title": "Comment for Claude",
         "category": "Spool"
       }
     ],
@@ -177,6 +204,53 @@
         {
           "command": "spool.branchSession",
           "when": "false"
+        },
+        {
+          "command": "spool.queueComment",
+          "when": "false"
+        },
+        {
+          "command": "spool.saveCommentDraft",
+          "when": "false"
+        },
+        {
+          "command": "spool.queueDraft",
+          "when": "false"
+        },
+        {
+          "command": "spool.deleteComment",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "spool.queueComment",
+          "when": "commentController == spool && commentThreadIsEmpty",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.saveCommentDraft",
+          "when": "commentController == spool && commentThreadIsEmpty",
+          "group": "inline@2"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "spool.queueDraft",
+          "when": "commentController == spool && commentThread =~ /^(draft|queued)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.deleteComment",
+          "when": "commentController == spool && !commentThreadIsEmpty",
+          "group": "inline@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "spool.commentOnSelection",
+          "when": "resourceScheme == file && editorHasSelection",
+          "group": "9_cutcopypaste@9"
         }
       ]
     }

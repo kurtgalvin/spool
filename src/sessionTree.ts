@@ -1,6 +1,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { CommentStore } from './comments';
 import { FolderGroup, groupFor } from './groups';
 import { Session, SessionStore } from './sessions';
 import { SessionStatus } from './status';
@@ -34,8 +35,12 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
   /** groupFor() walks the filesystem; cache by start dir. */
   private readonly groupDirs = new Map<string, string>();
 
-  constructor(private readonly store: SessionStore) {
+  constructor(
+    private readonly store: SessionStore,
+    private readonly comments: CommentStore,
+  ) {
     store.onDidChange(() => this.changed.fire());
+    comments.onDidChange(() => this.changed.fire());
     vscode.workspace.onDidChangeWorkspaceFolders(() => this.changed.fire());
   }
 
@@ -136,7 +141,15 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     // Show where in the group the session started, if not at its root.
     const group = this.groupOf(session);
     const subdir = group && session.launchDir ? path.relative(group.dir, session.launchDir) : '';
-    item.description = [display.label, subdir, session.elsewhere && 'other window'].filter(Boolean).join(' · ');
+    const queued = this.comments.queuedOn(session.id).length;
+    item.description = [
+      display.label,
+      subdir,
+      session.elsewhere && 'other window',
+      queued && `${queued} ${queued === 1 ? 'comment' : 'comments'}`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     item.iconPath = display.icon;
     // Matched by `viewItem` in package.json menu `when` clauses. Sessions in other windows get
     // no actions: their window owns them.
