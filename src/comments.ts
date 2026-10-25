@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
  * - sent: the prompt was typed into the session.
  * - read: Claude fetched it.
  * - replied: Claude posted a reply.
- * - resolved: marked done, by Claude or you.
+ * - resolved: you marked it done.
  */
 export type CommentStatus = 'draft' | 'queued' | 'sent' | 'read' | 'replied' | 'resolved';
 
@@ -84,6 +84,28 @@ export class CommentStore implements vscode.Disposable {
     comment.sessionId = sessionId;
     comment.status = 'queued';
     this.save(comment);
+  }
+
+  /** Your follow-up in a comment's thread. It's queued like a new comment until sent. */
+  addReply(comment: CodeComment, text: string): void {
+    comment.replies.push({ author: 'you', text, at: Date.now() });
+    comment.status = 'queued';
+    this.save(comment);
+  }
+
+  /** Marks a comment done, or reopens it as replied. */
+  setResolved(comment: CodeComment, resolved: boolean): void {
+    comment.status = resolved ? 'resolved' : 'replied';
+    this.save(comment);
+  }
+
+  /** After the session was told about them. */
+  markSent(comments: CodeComment[]): void {
+    for (const comment of comments) {
+      comment.status = 'sent';
+      this.persistence.save(comment);
+    }
+    this.changed.fire();
   }
 
   delete(comment: CodeComment): void {

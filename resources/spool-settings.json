@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__spool"
+    ]
+  },
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],

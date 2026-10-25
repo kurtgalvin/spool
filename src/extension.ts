@@ -10,7 +10,7 @@ import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
 import { JsonFiles } from './persistence';
 import { SavedSession, Session, SessionStore } from './sessions';
-import { SessionTreeProvider } from './sessionTree';
+import { SessionTreeProvider, isGroup } from './sessionTree';
 
 const LIVENESS_CHECK_MS = 5_000;
 
@@ -61,7 +61,9 @@ export async function activate(context: vscode.ExtensionContext) {
     log.error((err as Error).message);
   }
 
-  const settingsPath = context.asAbsolutePath('resources/spool-hooks.json');
+  // Hooks, and permission for Spool's MCP tools.
+  const settingsPath = context.asAbsolutePath('resources/spool-settings.json');
+  const mcpConfigPath = context.asAbsolutePath('resources/spool-mcp.json');
   const hookScriptPath = context.asAbsolutePath('out/hook.js');
   const openTerminal = (terminalId: string, name: string, cwd?: string | vscode.Uri) =>
     vscode.window.createTerminal({
@@ -71,12 +73,16 @@ export async function activate(context: vscode.ExtensionContext) {
         SPOOL_ID: terminalId,
         SPOOL_SOCKET: broker.socketPath,
         SPOOL_HOOK_SCRIPT: hookScriptPath,
+        SPOOL_MCP_SCRIPT: context.asAbsolutePath('out/mcp.js'),
+        SPOOL_STORAGE: storageDir,
       },
       iconPath: new vscode.ThemeIcon('sparkle'),
     });
   const runClaude = (session: Session, ...args: string[]) => {
     // Run claude through the user's shell so it gets their normal PATH and profile.
-    session.terminal?.sendText(`claude ${['--settings', settingsPath, ...args].map(shellQuote).join(' ')}`);
+    // --mcp-config adds Spool's server to the user's own; it takes several files, so it goes last.
+    const claudeArgs = ['--settings', settingsPath, ...args, '--mcp-config', mcpConfigPath];
+    session.terminal?.sendText(`claude ${claudeArgs.map(shellQuote).join(' ')}`);
     session.terminal?.show();
   };
 
@@ -131,22 +137,43 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
     vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
 
-    // Comments. The first two are the buttons under a new thread's input box.
-    vscode.commands.registerCommand('spool.queueComment', async (reply: vscode.CommentReply) => {
-      // Cancelling the pick leaves the input as it is.
-      const session = await pickSessionFor(reply.thread.uri.fsPath, store);
-      if (session) {
-        await threads.create(reply, session);
+    // Comments. Send, Queue and Queue On are the buttons under a new thread's input box.
+    vscode.commands.registerCommand('spool.sendComment', async (reply: vscode.CommentReply) => {
+      const target = threads.queueTarget ?? (await pickSessionFor(reply.thread.uri.fsPath, store, false));
+      if (target && target !== 'draft') {
+        await send(target, [await threads.create(reply, target)]);
       }
     }),
-    vscode.commands.registerCommand('spool.saveCommentDraft', (reply: vscode.CommentReply) =>
-      threads.create(reply, undefined),
-    ),
+    vscode.commands.registerCommand('spool.queueComment', async (reply: vscode.CommentReply) => {
+      const target = threads.queueTarget ?? (await pickSessionFor(reply.thread.uri.fsPath, store, true));
+      // Cancelling the pick leaves the input as it is.
+      if (target) {
+        await threads.create(reply, target === 'draft' ? undefined : target);
+      }
+    }),
+    vscode.commands.registerCommand('spool.queueCommentOn', async (reply: vscode.CommentReply) => {
+      const target = await pickSessionFor(reply.thread.uri.fsPath, store, true);
+      if (target) {
+        await threads.create(reply, target === 'draft' ? undefined : target);
+      }
+    }),
     vscode.commands.registerCommand('spool.queueDraft', async (thread: vscode.CommentThread) => {
       const comment = threads.commentFor(thread);
-      const session = comment && (await pickSessionFor(comment.file, store));
-      if (comment && session) {
+      const session = comment && (await pickSessionFor(comment.file, store, false));
+      if (comment && session && session !== 'draft') {
         comments.queue(comment, session.id);
+      }
+    }),
+    vscode.commands.registerCommand('spool.resolveComment', (thread: vscode.CommentThread) => {
+      const comment = threads.commentFor(thread);
+      if (comment) {
+        comments.setResolved(comment, true);
+      }
+    }),
+    vscode.commands.registerCommand('spool.reopenComment', (thread: vscode.CommentThread) => {
+      const comment = threads.commentFor(thread);
+      if (comment) {
+        comments.setResolved(comment, false);
       }
     }),
     vscode.commands.registerCommand('spool.deleteComment', (thread: vscode.CommentThread) => {
@@ -155,6 +182,22 @@ export async function activate(context: vscode.ExtensionContext) {
         comments.delete(comment);
       }
     }),
+    // Reply and Reply Later are the buttons under an existing thread's reply box.
+    vscode.commands.registerCommand('spool.replyComment', async (reply: vscode.CommentReply) => {
+      const comment = threads.reply(reply);
+      const session = store.all.find((s) => s.id === comment?.sessionId);
+      if (comment && session?.terminal && session.status !== 'exited') {
+        await send(session, [comment]);
+      } else {
+        vscode.window.showInformationMessage("The comment's session isn't running here; the reply is queued on it.");
+      }
+    }),
+    vscode.commands.registerCommand('spool.replyCommentLater', (reply: vscode.CommentReply) => {
+      threads.reply(reply);
+    }),
+    vscode.commands.registerCommand('spool.sendComments', (session: Session) =>
+      send(session, comments.queuedOn(session.id)),
+    ),
     // Opens the comment input on the selection; VS Code asks which extension if several offer comments.
     vscode.commands.registerCommand('spool.commentOnSelection', () =>
       vscode.commands.executeCommand('workbench.action.addComment'),
@@ -170,7 +213,30 @@ export async function activate(context: vscode.ExtensionContext) {
     // and when a new session takes over the active terminal.
     vscode.window.onDidChangeActiveTerminal(selectActiveSession),
     store.onDidTakeOverTerminal(() => selectActiveSession(vscode.window.activeTerminal)),
+    // New comments are queued on the session you last looked at, in its terminal or here.
+    vscode.window.onDidChangeActiveTerminal((terminal) => threads.setQueueTarget(store.findByTerminal(terminal))),
+    store.onDidTakeOverTerminal((session) => threads.setQueueTarget(session)),
+    view.onDidChangeSelection(({ selection }) => {
+      const [element] = selection;
+      if (element && !isGroup(element)) {
+        threads.setQueueTarget(element);
+      }
+    }),
   );
+  threads.setQueueTarget(store.findByTerminal(vscode.window.activeTerminal));
+
+  /** Tells a session about comments queued on it; it reads them with Spool's MCP tools. */
+  async function send(session: Session, toSend: CodeComment[]): Promise<void> {
+    if (!toSend.length || !session.terminal) {
+      return;
+    }
+    comments.markSent(toSend);
+    const count = toSend.length === 1 ? 'a code comment' : `${toSend.length} code comments`;
+    await typeIntoClaude(
+      session.terminal,
+      `Spool: you have ${count} from me. Read them with the spool get_comments tool and reply to each.`,
+    );
+  }
 
   function selectActiveSession(terminal: vscode.Terminal | undefined): void {
     const session = store.findByTerminal(terminal);
@@ -212,6 +278,17 @@ function isInOpenFolder(session: SavedSession): boolean {
     const relative = path.relative(folder.uri.fsPath, cwd);
     return !relative.startsWith('..') && !path.isAbsolute(relative);
   });
+}
+
+/**
+ * Types one line into a session's Claude prompt and submits it. Enter is sent separately:
+ * arriving in the same burst as the text, Claude can take it as part of a paste (a newline)
+ * rather than a submit. If Claude is busy, it queues the message.
+ */
+async function typeIntoClaude(terminal: vscode.Terminal, line: string): Promise<void> {
+  terminal.sendText(line, false);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  terminal.sendText('\r', false);
 }
 
 function withTimeout<T>(promise: Thenable<T>, ms: number): Promise<T | undefined> {

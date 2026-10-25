@@ -41,6 +41,14 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
   never saves trust, so the prompt reappears every launch. Ask for a folder instead (or a
   `spool.defaultFolder` setting).
 
+- **Read-only sessions** (deferred from [milestone 4](milestone-4.md)). A `PreToolUse`
+  hook on `Edit|Write|MultiEdit|NotebookEdit|Bash` denies the tool when the session is
+  read-only, with a reason Claude sees ("Read only: answer instead of editing"). Read-only
+  is a flag file per `SPOOL_ID` in global storage, checked locally by the hook, so it can be
+  toggled on any running session. Bash is denied completely, since shell commands can write
+  files. Caveat: hooks fail open, so with no `node` on PATH read-only silently does nothing;
+  warn on sessions whose hooks never fired.
+
 ## Later / Marketplace
 
 - Windows support (named pipe instead of a Unix socket).

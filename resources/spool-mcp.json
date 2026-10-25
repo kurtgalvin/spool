@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "spool": { "command": "node", "args": ["${SPOOL_MCP_SCRIPT}"] }
+  }
+}

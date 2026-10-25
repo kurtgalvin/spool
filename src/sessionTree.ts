@@ -153,10 +153,11 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     item.iconPath = display.icon;
     // Matched by `viewItem` in package.json menu `when` clauses. Sessions in other windows get
     // no actions: their window owns them.
-    // `:conversation` marks sessions with a Claude conversation to resume or branch from.
+    // `:conversation` marks sessions with a Claude conversation to resume or branch from,
+    // `:comments` ones with comments queued to send.
     item.contextValue = session.elsewhere
       ? `elsewhere:${session.status}`
-      : `session:${session.status}${session.claudeSessionId ? ':conversation' : ''}`;
+      : `session:${session.status}${session.claudeSessionId ? ':conversation' : ''}${queued ? ':comments' : ''}`;
     item.tooltip = [
       `${session.name} — ${display.label}`,
       session.elsewhere && 'Running in another VS Code window',

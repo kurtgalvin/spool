@@ -2,7 +2,7 @@
   "name": "spool",
   "displayName": "Spool",
   "description": "Manage multiple Claude Code terminal sessions",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "kurtgalvin",
   "license": "Apache-2.0",
   "engines": {
@@ -69,12 +69,7 @@
       },
       {
         "command": "spool.queueComment",
-        "title": "Queue on Session",
-        "category": "Spool"
-      },
-      {
-        "command": "spool.saveCommentDraft",
-        "title": "Save as Draft",
+        "title": "Queue",
         "category": "Spool"
       },
       {
@@ -93,6 +88,44 @@
         "command": "spool.commentOnSelection",
         "title": "Comment for Claude",
         "category": "Spool"
+      },
+      {
+        "command": "spool.sendComments",
+        "title": "Send Comments",
+        "category": "Spool",
+        "icon": "$(send)"
+      },
+      {
+        "command": "spool.queueCommentOn",
+        "title": "Queue on…",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.replyComment",
+        "title": "Reply",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.replyCommentLater",
+        "title": "Reply Later",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.sendComment",
+        "title": "Send",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.resolveComment",
+        "title": "Resolve",
+        "category": "Spool",
+        "icon": "$(check)"
+      },
+      {
+        "command": "spool.reopenComment",
+        "title": "Reopen",
+        "category": "Spool",
+        "icon": "$(issue-reopened)"
       }
     ],
     "viewsContainers": {
@@ -121,18 +154,23 @@
     "menus": {
       "view/item/context": [
         {
+          "command": "spool.sendComments",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle):.*comments$/",
+          "group": "inline@0"
+        },
+        {
           "command": "spool.newSession",
           "when": "view == spool.sessions && viewItem == group",
           "group": "inline"
         },
         {
           "command": "spool.branchSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:.*:conversation$/",
+          "when": "view == spool.sessions && viewItem =~ /^session:[^:]+:conversation/",
           "group": "inline@0"
         },
         {
           "command": "spool.resumeSession",
-          "when": "view == spool.sessions && viewItem == session:exited:conversation",
+          "when": "view == spool.sessions && viewItem =~ /^session:exited:conversation/",
           "group": "inline@1"
         },
         {
@@ -167,13 +205,18 @@
         },
         {
           "command": "spool.resumeSession",
-          "when": "view == spool.sessions && viewItem == session:exited:conversation",
+          "when": "view == spool.sessions && viewItem =~ /^session:exited:conversation/",
           "group": "3_lifecycle@0"
         },
         {
           "command": "spool.branchSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:.*:conversation$/",
+          "when": "view == spool.sessions && viewItem =~ /^session:[^:]+:conversation/",
           "group": "1_edit@2"
+        },
+        {
+          "command": "spool.sendComments",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle):.*comments$/",
+          "group": "1_edit@0"
         }
       ],
       "commandPalette": [
@@ -210,27 +253,66 @@
           "when": "false"
         },
         {
-          "command": "spool.saveCommentDraft",
-          "when": "false"
-        },
-        {
           "command": "spool.queueDraft",
           "when": "false"
         },
         {
           "command": "spool.deleteComment",
           "when": "false"
+        },
+        {
+          "command": "spool.sendComments",
+          "when": "false"
+        },
+        {
+          "command": "spool.queueCommentOn",
+          "when": "false"
+        },
+        {
+          "command": "spool.replyComment",
+          "when": "false"
+        },
+        {
+          "command": "spool.replyCommentLater",
+          "when": "false"
+        },
+        {
+          "command": "spool.sendComment",
+          "when": "false"
+        },
+        {
+          "command": "spool.resolveComment",
+          "when": "false"
+        },
+        {
+          "command": "spool.reopenComment",
+          "when": "false"
         }
       ],
       "comments/commentThread/context": [
         {
-          "command": "spool.queueComment",
+          "command": "spool.sendComment",
           "when": "commentController == spool && commentThreadIsEmpty",
           "group": "inline@1"
         },
         {
-          "command": "spool.saveCommentDraft",
+          "command": "spool.queueComment",
           "when": "commentController == spool && commentThreadIsEmpty",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.queueCommentOn",
+          "when": "commentController == spool && commentThreadIsEmpty",
+          "group": "inline@3"
+        },
+        {
+          "command": "spool.replyComment",
+          "when": "commentController == spool && !commentThreadIsEmpty",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.replyCommentLater",
+          "when": "commentController == spool && !commentThreadIsEmpty",
           "group": "inline@2"
         }
       ],
@@ -241,9 +323,19 @@
           "group": "inline@1"
         },
         {
+          "command": "spool.resolveComment",
+          "when": "commentController == spool && commentThread =~ /^(sent|read|replied)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.reopenComment",
+          "when": "commentController == spool && commentThread == resolved",
+          "group": "inline@2"
+        },
+        {
           "command": "spool.deleteComment",
           "when": "commentController == spool && !commentThreadIsEmpty",
-          "group": "inline@2"
+          "group": "inline@3"
         }
       ],
       "editor/context": [
