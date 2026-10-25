@@ -6,8 +6,11 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 
-/** Bump on incompatible protocol changes: a new version gets its own socket and broker. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Bump on incompatible protocol changes: a new version gets its own socket and broker.
+ * Compatible changes to the broker are picked up by version check instead (see BrokerHello).
+ */
+export const PROTOCOL_VERSION = 2;
 
 /** How often a window pings the broker, and how long the broker waits without a ping before exiting. */
 export const PING_INTERVAL_MS = 2_000;
@@ -20,8 +23,35 @@ export interface HookMessage {
   payload: Record<string, unknown>;
 }
 
-/** Sent by a window: first line `subscribe`, then `ping` every PING_INTERVAL_MS. */
-export type WindowMessage = { type: 'subscribe' } | { type: 'ping' };
+/**
+ * Sent by a window: first line `subscribe` with its extension version, then `ping` every
+ * PING_INTERVAL_MS. `shutdown` asks an outdated broker to exit so a newer one can start.
+ */
+export type WindowMessage = { type: 'subscribe'; version: string } | { type: 'ping' } | { type: 'shutdown' };
+
+/** The broker's reply to `subscribe`, before any hook messages. */
+export interface BrokerHello {
+  type: 'hello';
+  version: string;
+}
+
+export function isBrokerHello(value: unknown): value is BrokerHello {
+  const message = value as BrokerHello | undefined;
+  return message?.type === 'hello' && typeof message.version === 'string';
+}
+
+/** Compares dotted numeric versions (e.g. 0.1.10 > 0.1.9). */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff) {
+      return Math.sign(diff);
+    }
+  }
+  return 0;
+}
 
 /** The broker's socket. Stable per user, so Claude processes keep reaching it across reloads and windows. */
 export function brokerSocketPath(): string {

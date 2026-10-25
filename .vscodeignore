@@ -4,3 +4,5 @@ docs/**
 **/*.map
 tsconfig.json
 eslint.config.mjs
+.gitignore
+*.vsix

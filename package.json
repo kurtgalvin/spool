@@ -30,7 +30,7 @@
       },
       {
         "command": "spool.renameSession",
-        "title": "Rename\u2026",
+        "title": "Rename…",
         "category": "Spool"
       },
       {
@@ -61,6 +61,11 @@
         "title": "Remove from List",
         "category": "Spool",
         "icon": "$(close)"
+      },
+      {
+        "command": "spool.restartBroker",
+        "title": "Restart Broker",
+        "category": "Spool"
       }
     ],
     "viewsContainers": {
@@ -187,11 +192,14 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --allow-missing-repository -o spool.vsix",
+    "install-local": "npm run package && code --install-extension spool.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^4.0.0",
     "eslint": "^10.13.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.0"

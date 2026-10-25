@@ -55,8 +55,17 @@ Marketplace release — e.g. never modify the user's global Claude Code config.
 - Replays the last minute of messages to a new subscriber, so hooks fired mid-reload
   aren't lost.
 - If two windows race to start it, the loser sees a live broker and exits; a socket file
-  left by a crash (nothing answering) is removed. Clients reconnect, restarting the broker
-  if needed, whenever the connection drops.
+  left by a crash (nothing answering) is removed. Each broker remembers the inode of the
+  socket file it created and exits (without unlinking) if the path stops being its file —
+  which happens when brokers starting at once against a stale file remove each other's.
+- Clients reconnect whenever the connection drops, waiting 2s for another window's broker
+  before starting their own.
+- **Updates:** a window sends its extension version on `subscribe`; the broker replies
+  `hello` with its own. A newer window sends `shutdown` and starts the replacement right
+  away (the other windows' 2s wait lets it win), so updates apply without closing windows.
+  An older window leaves a newer broker alone. **Spool: Restart Broker** does the same on
+  demand (useful in development, where the version doesn't change). Hooks fired during the
+  swap (well under a second) are lost.
 - The socket path carries a protocol version; bump it on incompatible changes.
 
 ### Launching a session

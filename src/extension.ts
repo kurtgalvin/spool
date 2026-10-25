@@ -37,6 +37,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const broker = new BrokerClient(
     brokerSocketPath(),
+    context.extension.packageJSON.version,
     context.asAbsolutePath('out/broker.js'),
     path.join(storageDir, 'broker.log'),
     (message) => {
@@ -119,6 +120,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // onDidCloseTerminal marks the session exited.
       session.terminal?.dispose();
     }),
+    vscode.commands.registerCommand('spool.restartBroker', () => broker.restartBroker()),
     vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
     vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
   );
