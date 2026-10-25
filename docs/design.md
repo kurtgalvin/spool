@@ -172,6 +172,9 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
   queue comments on a session or ask in a read-only side thread; Claude reads them and
   replies per thread through a Spool MCP server. A comments view shows threads as leaves
   under their files.
+- **Session history** ([milestone 5](milestone-5.md)): a History view of the folder's
+  Claude conversations that Spool isn't showing, from `~/.claude/projects/` transcripts,
+  to resume or branch into Spool.
 - **Resume group** after reload: relaunch every session in a group with `--resume`.
 
 ### Later
@@ -180,7 +183,6 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 - Side threads reporting results back to their parent (reusing the reply mechanism).
 - Worktree-per-session for isolated parallel work.
 - tmux backing for sessions that survive quitting VS Code (reloads are already handled).
-- Session history browser from `~/.claude/projects/` transcripts.
 - Marketplace release.
 
 ## Open questions

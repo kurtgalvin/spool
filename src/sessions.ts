@@ -220,6 +220,28 @@ export class SessionStore implements vscode.Disposable {
     this.setStatus(session, 'starting');
   }
 
+  /**
+   * Adds a conversation Spool didn't start (from the History view) as an exited session, so
+   * it can be resumed like any other. It runs in `cwd`, which also decides its folder group.
+   */
+  adopt(claudeSessionId: string, cwd: string, name: string, nameSource: Session['nameSource']): Session {
+    const session: Session = {
+      id: randomUUID(),
+      // Replaced when it's resumed in a terminal.
+      terminalId: randomUUID(),
+      claudeSessionId,
+      cwd,
+      launchDir: cwd,
+      name,
+      nameSource,
+      status: 'exited',
+    };
+    this.sessions.set(session.id, session);
+    this.log.info(`${name}: added from history`);
+    this.changed.fire(session);
+    return session;
+  }
+
   handleHook({ spoolId: terminalId, payload }: HookMessage): void {
     const session = this.routeHook(terminalId, payload);
     if (!session) {

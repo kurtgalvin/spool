@@ -7,6 +7,8 @@ import { CodeComment, CommentStore } from './comments';
 import { CommentThreads, pickBranchParent, pickDestination, pickSession } from './commentThreads';
 import { nameFromPrompt } from './naming';
 import { FolderGroup } from './groups';
+import { Conversation } from './history';
+import { HistoryTreeProvider } from './historyTree';
 import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
 import { JsonFiles } from './persistence';
@@ -277,6 +279,50 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
   threads.setQueueTarget(store.findByTerminal(vscode.window.activeTerminal));
+
+  // History: Claude conversations for the open folders that Spool isn't listing.
+  const history = new HistoryTreeProvider(store, context.globalState);
+  const historyView = vscode.window.createTreeView('spool.history', { treeDataProvider: history });
+  history.setVisible(historyView.visible);
+  context.subscriptions.push(
+    history,
+    historyView,
+    historyView.onDidChangeVisibility(({ visible }) => history.setVisible(visible)),
+    vscode.commands.registerCommand('spool.refreshHistory', () => history.refresh()),
+    vscode.commands.registerCommand('spool.hideHistory', (conversation: Conversation) => history.hide(conversation)),
+    // Adds it to the Sessions view and resumes it there; from then on it's an ordinary session.
+    vscode.commands.registerCommand('spool.resumeHistory', async (conversation: Conversation) => {
+      const running = history.runningProcess(conversation);
+      if (running) {
+        const choice = await vscode.window.showWarningMessage(
+          `"${conversation.title}" is still running in another terminal (pid ${running.pid}).`,
+          {
+            modal: true,
+            detail:
+              'Two Claude processes writing one conversation would interleave it. Quit it there first, or branch it instead.',
+          },
+          'Resume Anyway',
+        );
+        if (choice !== 'Resume Anyway') {
+          return;
+        }
+      }
+      const session = store.adopt(
+        conversation.id,
+        conversation.cwd,
+        conversation.title,
+        conversation.titleSource === 'custom' ? 'user' : 'auto',
+      );
+      await vscode.commands.executeCommand('spool.resumeSession', session);
+    }),
+    // A new Spool session forked from it; the original stays in History.
+    vscode.commands.registerCommand('spool.branchHistory', (conversation: Conversation) => {
+      const terminalId = randomUUID();
+      const name = nameFromPrompt(`Branch: ${conversation.title}`);
+      const session = store.create(terminalId, conversation.cwd, (n) => openTerminal(terminalId, n, conversation.cwd), name);
+      runClaude(session, '--resume', conversation.id, '--fork-session');
+    }),
+  );
 
   /** Tells a session about comments queued on it; it reads them with Spool's MCP tools. */
   async function send(session: Session, toSend: CodeComment[]): Promise<void> {

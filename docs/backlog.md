@@ -33,8 +33,6 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
 - **Mute** notifications per session or group.
 - **Interrupt detection** from the transcript: rejecting a permission prompt writes
   `[Request interrupted by user for tool use]`; a long quiet stretch could cover Esc.
-- **Session history:** resume any past conversation for a folder from
-  `~/.claude/projects`, not only ones Spool launched.
 - **OS notifications** when VS Code isn't focused.
 - **Duplicate group names:** disambiguate two repos with the same folder name in the label.
 - **Home-folder trust prompt:** with no folder open, sessions start in `~`, where Claude
