@@ -143,7 +143,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('spool.restartBroker', () => broker.restartBroker()),
     vscode.commands.registerCommand('spool.markIdle', (session: Session) => store.markIdle(session)),
-    vscode.commands.registerCommand('spool.removeSession', (session: Session) => store.remove(session)),
 
     // Comments. Send, Queue and More are the buttons under a new thread's input box; with no
     // current session, Send and Queue ask for one. Cancelling a pick leaves the input as it is.
@@ -281,7 +280,7 @@ export async function activate(context: vscode.ExtensionContext) {
   threads.setQueueTarget(store.findByTerminal(vscode.window.activeTerminal));
 
   // History: Claude conversations for the open folders that Spool isn't listing.
-  const history = new HistoryTreeProvider(store, context.globalState);
+  const history = new HistoryTreeProvider(store, comments, context.globalState);
   const historyView = vscode.window.createTreeView('spool.history', { treeDataProvider: history });
   history.setVisible(historyView.visible);
   context.subscriptions.push(
@@ -289,7 +288,20 @@ export async function activate(context: vscode.ExtensionContext) {
     historyView,
     historyView.onDidChangeVisibility(({ visible }) => history.setVisible(visible)),
     vscode.commands.registerCommand('spool.refreshHistory', () => history.refresh()),
-    vscode.commands.registerCommand('spool.hideHistory', (conversation: Conversation) => history.hide(conversation)),
+    // An exited session loses Spool's record (and its resolved comments), so its conversation
+    // moves to Not in Spool; removing it there hides it. Transcripts are kept.
+    vscode.commands.registerCommand('spool.removeFromList', (target: Session | Conversation) => {
+      if (!('terminalId' in target)) {
+        history.hide(target.id);
+        return;
+      }
+      for (const comment of comments.all) {
+        if (comment.sessionId === target.id && comment.status === 'resolved') {
+          comments.delete(comment);
+        }
+      }
+      store.remove(target);
+    }),
     // Adds it to the Sessions view and resumes it there; from then on it's an ordinary session.
     vscode.commands.registerCommand('spool.resumeHistory', async (conversation: Conversation) => {
       const running = history.runningProcess(conversation);

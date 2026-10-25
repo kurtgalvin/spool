@@ -111,6 +111,15 @@ export class TranscriptIndex {
     return result;
   }
 
+  /** When the conversation `id`, run in `cwd`, was last written to; undefined if its transcript isn't there. */
+  lastActive(cwd: string, id: string): number | undefined {
+    try {
+      return fs.statSync(path.join(this.projectsDir, projectDirName(cwd), `${id}.jsonl`)).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Running Claude processes by the conversation they have open. */
   running(): Map<string, RunningProcess> {
     const result = new Map<string, RunningProcess>();

@@ -54,9 +54,25 @@ export function isComment(element: SessionTreeElement): element is CodeComment {
   return 'startLine' in element;
 }
 
+/** Comments waiting on you: Claude replied, or they're queued to send. */
+export function needsYou(session: Session, comments: CommentStore): boolean {
+  return comments.all.some(
+    (comment) => comment.sessionId === session.id && (comment.status === 'replied' || comment.status === 'queued'),
+  );
+}
+
+/**
+ * The Sessions view shows running sessions, and exited ones only while comments on them wait
+ * on you. Other exited sessions are in the History view.
+ */
+export function inSessionsView(session: Session, comments: CommentStore): boolean {
+  return session.status !== 'exited' || needsYou(session, comments);
+}
+
 /**
  * Sessions grouped by folder (see groupFor). Every open workspace folder has a group, even
- * with no sessions, so a session can be started there from its row.
+ * with no sessions, so a session can be started there from its row. Only sessions
+ * inSessionsView() are listed.
  */
 export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeElement> {
   private readonly changed = new vscode.EventEmitter<void>();
@@ -161,15 +177,19 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
   /** Open workspace folders first, in workspace order, then other folders by name. */
   private allGroups(): FolderGroup[] {
     const open = (vscode.workspace.workspaceFolders ?? []).map((folder) => this.group(folder.uri.fsPath));
-    const others = this.store.all
+    const others = this.shown()
       .map((session) => this.groupOf(session))
       .filter((group): group is FolderGroup => !!group && !open.includes(group))
       .sort((a, b) => path.basename(a.dir).localeCompare(path.basename(b.dir)));
     return [...new Set([...open, ...others])];
   }
 
+  private shown(): Session[] {
+    return this.store.all.filter((session) => inSessionsView(session, this.comments));
+  }
+
   private sessionsIn(group: FolderGroup): Session[] {
-    return this.store.all.filter((session) => this.groupOf(session) === group);
+    return this.shown().filter((session) => this.groupOf(session) === group);
   }
 
   /** Sessions shown directly under a group: all but side threads whose parent is still listed. */
@@ -178,13 +198,22 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
   }
 
   private threadsOf(session: Session): Session[] {
-    return this.store.childrenOf(session).filter((thread) => this.parentOf(thread) === session);
+    return this.store
+      .childrenOf(session)
+      .filter((thread) => inSessionsView(thread, this.comments) && this.parentOf(thread) === session);
   }
 
+  /** The session a side thread nests under: its parent, if listed here. */
   private parentOf(session: Session): Session | undefined {
-    const parent = session.parentId ? this.store.all.find((s) => s.id === session.parentId) : undefined;
+    const parent = this.forkedFrom(session);
     // A thread whose parent is in another group (shouldn't happen) is shown at its group's top level.
-    return parent && this.groupOf(parent) === this.groupOf(session) ? parent : undefined;
+    return parent && inSessionsView(parent, this.comments) && this.groupOf(parent) === this.groupOf(session)
+      ? parent
+      : undefined;
+  }
+
+  private forkedFrom(session: Session): Session | undefined {
+    return session.parentId ? this.store.all.find((s) => s.id === session.parentId) : undefined;
   }
 
   private group(startDir: string): FolderGroup {
@@ -244,9 +273,12 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     const subdir = group && session.launchDir ? path.relative(group.dir, session.launchDir) : '';
     const queued = this.count(comments, 'queued');
     const replied = this.count(comments, 'replied');
+    // A side thread whose parent is in History says where it came from.
+    const parent = this.forkedFrom(session);
     item.description = [
       display.label,
       subdir,
+      parent && !this.parentOf(session) && `from ${parent.name}`,
       session.elsewhere && 'other window',
       queued && `${queued} queued`,
       replied && `${replied} replied`,
@@ -300,38 +332,43 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
   }
 
   private commentItem(comment: CodeComment): vscode.TreeItem {
-    const display = COMMENT_DISPLAY[comment.status];
-    const firstLine = comment.text.split('\n').find((line) => line.trim())?.trim() ?? '';
-    const item = new vscode.TreeItem(firstLine, vscode.TreeItemCollapsibleState.None);
-    item.id = `comment:${comment.id}`;
-    item.iconPath = display.icon;
-    const lines =
-      comment.startLine === comment.endLine ? `${comment.startLine + 1}` : `${comment.startLine + 1}-${comment.endLine + 1}`;
-    item.description = `${path.basename(comment.file)}:${lines} · ${display.label}`;
-    const lastReply = comment.replies.at(-1);
-    item.tooltip = new vscode.MarkdownString(
-      [
-        `**${display.label}** · ${tildify(comment.file)}:${lines}`,
-        comment.text,
-        lastReply && `**${lastReply.author === 'claude' ? 'Claude' : 'You'}:** ${lastReply.text}`,
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-    );
-    // Matched by `viewItem` in package.json menu `when` clauses.
-    item.contextValue = `comment:${comment.status}`;
-    item.command = { command: 'spool.openComment', title: 'Open Comment', arguments: [comment] };
-    return item;
+    return commentTreeItem(comment);
   }
 }
 
-function sortComments(comments: CodeComment[]): CodeComment[] {
+/** A comment's row, in either view. */
+export function commentTreeItem(comment: CodeComment): vscode.TreeItem {
+  const display = COMMENT_DISPLAY[comment.status];
+  const firstLine = comment.text.split('\n').find((line) => line.trim())?.trim() ?? '';
+  const item = new vscode.TreeItem(firstLine, vscode.TreeItemCollapsibleState.None);
+  item.id = `comment:${comment.id}`;
+  item.iconPath = display.icon;
+  const lines =
+    comment.startLine === comment.endLine ? `${comment.startLine + 1}` : `${comment.startLine + 1}-${comment.endLine + 1}`;
+  item.description = `${path.basename(comment.file)}:${lines} · ${display.label}`;
+  const lastReply = comment.replies.at(-1);
+  item.tooltip = new vscode.MarkdownString(
+    [
+      `**${display.label}** · ${tildify(comment.file)}:${lines}`,
+      comment.text,
+      lastReply && `**${lastReply.author === 'claude' ? 'Claude' : 'You'}:** ${lastReply.text}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  );
+  // Matched by `viewItem` in package.json menu `when` clauses.
+  item.contextValue = `comment:${comment.status}`;
+  item.command = { command: 'spool.openComment', title: 'Open Comment', arguments: [comment] };
+  return item;
+}
+
+export function sortComments(comments: CodeComment[]): CodeComment[] {
   return comments.sort(
     (a, b) => COMMENT_ORDER.indexOf(a.status) - COMMENT_ORDER.indexOf(b.status) || a.createdAt - b.createdAt,
   );
 }
 
-function tildify(dir: string): string {
+export function tildify(dir: string): string {
   const home = os.homedir();
   return dir === home || dir.startsWith(home + path.sep) ? '~' + dir.slice(home.length) : dir;
 }

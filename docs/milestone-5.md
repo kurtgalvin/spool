@@ -49,6 +49,23 @@ that can't be read is left out.
      conversation would interleave it. Branching is safe.
    - **Hide**: removes a row from History, saved in Spool's storage. Transcripts are never
      deleted.
+3. **Exited sessions move to History.** Sessions shows what's running; History is what you
+   can pick back up, in two sections:
+   - **Exited**: Spool's sessions that have exited, newest first (by their transcript's
+     mtime), with their names, comments and side threads. Actions: Resume, Branch, Rename,
+     Remove from List. Resuming moves a session back to Sessions.
+   - **Not in Spool**: the conversations from step 1.
+   - With several folders open, each section has a row per folder group; with one, items are
+     listed directly.
+   - An exited session stays in Sessions while comments on it wait on you (Claude replied, or
+     queued to send), so a reply isn't buried in a collapsed view.
+   - A running side thread whose parent exited stays in Sessions at the top level, with
+     "from *parent*" in its description. An exited side thread nests under its parent in
+     Exited if the parent is there too.
+   - **Remove from List** replaces Hide and is only in History. On an exited session it
+     deletes Spool's record and its resolved comments (others go to Drafts), so the
+     conversation moves to Not in Spool; there, it hides the conversation. Transcripts are
+     never deleted.
 
 ## Out of scope
 

@@ -57,12 +57,6 @@
         "icon": "$(git-branch)"
       },
       {
-        "command": "spool.removeSession",
-        "title": "Remove from List",
-        "category": "Spool",
-        "icon": "$(close)"
-      },
-      {
         "command": "spool.restartBroker",
         "title": "Restart Broker",
         "category": "Spool"
@@ -156,16 +150,16 @@
         "icon": "$(git-branch)"
       },
       {
-        "command": "spool.hideHistory",
-        "title": "Hide",
-        "category": "Spool",
-        "icon": "$(eye-closed)"
-      },
-      {
         "command": "spool.refreshHistory",
         "title": "Refresh",
         "category": "Spool",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "spool.removeFromList",
+        "title": "Remove from List",
+        "category": "Spool",
+        "icon": "$(close)"
       }
     ],
     "viewsContainers": {
@@ -224,11 +218,6 @@
           "group": "inline"
         },
         {
-          "command": "spool.removeSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:exited/",
-          "group": "inline@2"
-        },
-        {
           "command": "spool.renameSession",
           "when": "view == spool.sessions && viewItem =~ /^session:/",
           "group": "1_edit@1"
@@ -242,11 +231,6 @@
           "command": "spool.killSession",
           "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)(:|$)/",
           "group": "3_lifecycle@1"
-        },
-        {
-          "command": "spool.removeSession",
-          "when": "view == spool.sessions && viewItem =~ /^session:exited/",
-          "group": "3_lifecycle@2"
         },
         {
           "command": "spool.resumeSession",
@@ -265,58 +249,93 @@
         },
         {
           "command": "spool.sendQueuedComment",
-          "when": "view == spool.sessions && viewItem == comment:queued",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem == comment:queued",
           "group": "inline@1"
         },
         {
           "command": "spool.queueDraft",
-          "when": "view == spool.sessions && viewItem == comment:draft",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem == comment:draft",
           "group": "inline@1"
         },
         {
           "command": "spool.resolveComment",
-          "when": "view == spool.sessions && viewItem =~ /^comment:(sent|read|replied)$/",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^comment:(sent|read|replied)$/",
           "group": "inline@2"
         },
         {
           "command": "spool.reopenComment",
-          "when": "view == spool.sessions && viewItem == comment:resolved",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem == comment:resolved",
           "group": "inline@2"
         },
         {
           "command": "spool.deleteComment",
-          "when": "view == spool.sessions && viewItem =~ /^comment:/",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^comment:/",
           "group": "inline@3"
         },
         {
           "command": "spool.branchHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
           "group": "inline@0"
         },
         {
           "command": "spool.resumeHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
           "group": "inline@1"
         },
         {
-          "command": "spool.hideHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
+          "command": "spool.removeFromList",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
           "group": "inline@2"
         },
         {
           "command": "spool.resumeHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
           "group": "1_history@0"
         },
         {
           "command": "spool.branchHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
           "group": "1_history@1"
         },
         {
-          "command": "spool.hideHistory",
-          "when": "view == spool.history && viewItem =~ /^history/",
-          "group": "2_hide@0"
+          "command": "spool.removeFromList",
+          "when": "view == spool.history && viewItem =~ /^conversation/",
+          "group": "3_lifecycle@0"
+        },
+        {
+          "command": "spool.branchSession",
+          "when": "view == spool.history && viewItem =~ /^exited:conversation/",
+          "group": "inline@0"
+        },
+        {
+          "command": "spool.resumeSession",
+          "when": "view == spool.history && viewItem =~ /^exited:conversation/",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.removeFromList",
+          "when": "view == spool.history && viewItem =~ /^exited/",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.resumeSession",
+          "when": "view == spool.history && viewItem =~ /^exited:conversation/",
+          "group": "1_history@0"
+        },
+        {
+          "command": "spool.branchSession",
+          "when": "view == spool.history && viewItem =~ /^exited:conversation/",
+          "group": "1_history@1"
+        },
+        {
+          "command": "spool.renameSession",
+          "when": "view == spool.history && viewItem =~ /^exited/",
+          "group": "2_edit@0"
+        },
+        {
+          "command": "spool.removeFromList",
+          "when": "view == spool.history && viewItem =~ /^exited/",
+          "group": "3_lifecycle@0"
         }
       ],
       "commandPalette": [
@@ -334,10 +353,6 @@
         },
         {
           "command": "spool.markIdle",
-          "when": "false"
-        },
-        {
-          "command": "spool.removeSession",
           "when": "false"
         },
         {
@@ -405,7 +420,7 @@
           "when": "false"
         },
         {
-          "command": "spool.hideHistory",
+          "command": "spool.removeFromList",
           "when": "false"
         }
       ],
