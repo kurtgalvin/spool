@@ -87,6 +87,16 @@ export class CommentThreads implements vscode.Disposable {
     return comment;
   }
 
+  /** Opens the comment's file at its lines and expands its thread. */
+  async reveal(comment: CodeComment): Promise<void> {
+    const range = new vscode.Range(comment.startLine, 0, comment.endLine, 0);
+    await vscode.window.showTextDocument(vscode.Uri.file(comment.file), { selection: range, preview: true });
+    const thread = this.threads.get(comment.id);
+    if (thread) {
+      thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    }
+  }
+
   commentFor(thread: vscode.CommentThread): CodeComment | undefined {
     const id = this.commentIds.get(thread);
     return this.comments.all.find((comment) => comment.id === id);

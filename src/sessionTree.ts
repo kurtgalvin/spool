@@ -1,7 +1,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CommentStore } from './comments';
+import { CodeComment, CommentStatus, CommentStore } from './comments';
 import { FolderGroup, groupFor } from './groups';
 import { Session, SessionStore } from './sessions';
 import { SessionStatus } from './status';
@@ -17,10 +17,41 @@ const STATUS_DISPLAY: Record<SessionStatus, { label: string; icon: vscode.ThemeI
 /** Statuses summarized on a group's row, so a collapsed group still shows what needs attention. */
 const SUMMARIZED: SessionStatus[] = ['needs-input', 'working'];
 
-export type SessionTreeElement = FolderGroup | Session;
+const COMMENT_DISPLAY: Record<CommentStatus, { label: string; icon: vscode.ThemeIcon }> = {
+  draft: { label: 'draft', icon: new vscode.ThemeIcon('edit') },
+  queued: { label: 'queued', icon: new vscode.ThemeIcon('clock') },
+  sent: { label: 'sent', icon: new vscode.ThemeIcon('send') },
+  read: { label: 'Claude is on it', icon: new vscode.ThemeIcon('eye', new vscode.ThemeColor('charts.blue')) },
+  replied: { label: 'replied', icon: new vscode.ThemeIcon('comment-unresolved', new vscode.ThemeColor('charts.yellow')) },
+  resolved: { label: 'resolved', icon: new vscode.ThemeIcon('check', new vscode.ThemeColor('disabledForeground')) },
+};
+
+/** Threads needing you first, done ones last. */
+const COMMENT_ORDER: CommentStatus[] = ['replied', 'queued', 'draft', 'sent', 'read', 'resolved'];
+
+/** The Comments node under a session, holding its comment threads. */
+export interface CommentsNode {
+  kind: 'comments';
+  session: Session;
+}
+
+/** The Drafts row at the top: comments not attached to a session yet. */
+export interface DraftsNode {
+  kind: 'drafts';
+}
+
+export type SessionTreeElement = FolderGroup | Session | CommentsNode | DraftsNode | CodeComment;
 
 export function isGroup(element: SessionTreeElement): element is FolderGroup {
   return 'isRepo' in element;
+}
+
+export function isSession(element: SessionTreeElement): element is Session {
+  return 'terminalId' in element;
+}
+
+export function isComment(element: SessionTreeElement): element is CodeComment {
+  return 'startLine' in element;
 }
 
 /**
@@ -34,6 +65,9 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
   private readonly groups = new Map<string, FolderGroup>();
   /** groupFor() walks the filesystem; cache by start dir. */
   private readonly groupDirs = new Map<string, string>();
+  /** Stable node objects, for the same reason as groups. */
+  private readonly commentsNodes = new Map<string, CommentsNode>();
+  private readonly draftsNode: DraftsNode = { kind: 'drafts' };
 
   constructor(
     private readonly store: SessionStore,
@@ -46,17 +80,77 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
 
   getChildren(element?: SessionTreeElement): SessionTreeElement[] {
     if (!element) {
-      return this.allGroups();
+      return [...(this.drafts().length ? [this.draftsNode] : []), ...this.allGroups()];
     }
-    return isGroup(element) ? this.topLevelIn(element) : this.threadsOf(element);
+    if (isGroup(element)) {
+      return this.topLevelIn(element);
+    }
+    if (isSession(element)) {
+      const comments = this.commentsOf(element).length ? [this.commentsNode(element)] : [];
+      return [...comments, ...this.threadsOf(element)];
+    }
+    if (isComment(element)) {
+      return [];
+    }
+    return element.kind === 'drafts' ? this.drafts() : this.commentsOf(element.session);
   }
 
   getParent(element: SessionTreeElement): SessionTreeElement | undefined {
-    return isGroup(element) ? undefined : (this.parentOf(element) ?? this.groupOf(element));
+    if (isGroup(element) || (!isSession(element) && !isComment(element) && element.kind === 'drafts')) {
+      return undefined;
+    }
+    if (isSession(element)) {
+      return this.parentOf(element) ?? this.groupOf(element);
+    }
+    if (isComment(element)) {
+      const session = this.sessionOf(element);
+      return session ? this.commentsNode(session) : this.draftsNode;
+    }
+    return element.session;
   }
 
   getTreeItem(element: SessionTreeElement): vscode.TreeItem {
-    return isGroup(element) ? this.groupItem(element) : this.sessionItem(element);
+    if (isGroup(element)) {
+      return this.groupItem(element);
+    }
+    if (isSession(element)) {
+      return this.sessionItem(element);
+    }
+    if (isComment(element)) {
+      return this.commentItem(element);
+    }
+    return element.kind === 'drafts' ? this.draftsItem() : this.commentsNodeItem(element);
+  }
+
+  /** The tree element for a comment, to reveal it. */
+  elementFor(comment: CodeComment): CodeComment | undefined {
+    return this.comments.all.find((c) => c.id === comment.id);
+  }
+
+  private commentsNode(session: Session): CommentsNode {
+    let node = this.commentsNodes.get(session.id);
+    if (!node || node.session !== session) {
+      node = { kind: 'comments', session };
+      this.commentsNodes.set(session.id, node);
+    }
+    return node;
+  }
+
+  private sessionOf(comment: CodeComment): Session | undefined {
+    return comment.sessionId ? this.store.all.find((s) => s.id === comment.sessionId) : undefined;
+  }
+
+  /** Drafts, and comments whose session is no longer listed, so they don't disappear. */
+  private drafts(): CodeComment[] {
+    return sortComments(this.comments.all.filter((comment) => !this.sessionOf(comment)));
+  }
+
+  private commentsOf(session: Session): CodeComment[] {
+    return sortComments(this.comments.all.filter((comment) => comment.sessionId === session.id));
+  }
+
+  private count(comments: CodeComment[], status: CommentStatus): number {
+    return comments.filter((comment) => comment.status === status).length;
   }
 
   groupOf(session: Session): FolderGroup | undefined {
@@ -119,10 +213,14 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     );
     item.id = `group:${group.dir}`;
     item.iconPath = new vscode.ThemeIcon(group.isRepo ? 'repo' : 'folder');
-    item.description = SUMMARIZED.map((status) => {
-      const count = sessions.filter((s) => s.status === status).length;
-      return count ? `${count} ${STATUS_DISPLAY[status].label}` : undefined;
-    })
+    const replied = this.count(sessions.flatMap((session) => this.commentsOf(session)), 'replied');
+    item.description = [
+      ...SUMMARIZED.map((status) => {
+        const count = sessions.filter((s) => s.status === status).length;
+        return count ? `${count} ${STATUS_DISPLAY[status].label}` : undefined;
+      }),
+      replied && `${replied} replied`,
+    ]
       .filter(Boolean)
       .join(' · ');
     item.tooltip = tildify(group.dir);
@@ -133,20 +231,25 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
 
   private sessionItem(session: Session): vscode.TreeItem {
     const display = STATUS_DISPLAY[session.status];
+    const comments = this.commentsOf(session);
     const item = new vscode.TreeItem(
       session.name,
-      this.threadsOf(session).length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+      this.threadsOf(session).length || comments.length
+        ? vscode.TreeItemCollapsibleState.Expanded
+        : vscode.TreeItemCollapsibleState.None,
     );
     item.id = session.id;
     // Show where in the group the session started, if not at its root.
     const group = this.groupOf(session);
     const subdir = group && session.launchDir ? path.relative(group.dir, session.launchDir) : '';
-    const queued = this.comments.queuedOn(session.id).length;
+    const queued = this.count(comments, 'queued');
+    const replied = this.count(comments, 'replied');
     item.description = [
       display.label,
       subdir,
       session.elsewhere && 'other window',
-      queued && `${queued} ${queued === 1 ? 'comment' : 'comments'}`,
+      queued && `${queued} queued`,
+      replied && `${replied} replied`,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -170,6 +273,62 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     }
     return item;
   }
+
+  private commentsNodeItem(node: CommentsNode): vscode.TreeItem {
+    const comments = this.commentsOf(node.session);
+    // Open while something needs you; done threads stay out of the way.
+    const needsYou = comments.some((comment) => comment.status === 'replied' || comment.status === 'queued');
+    const item = new vscode.TreeItem(
+      'Comments',
+      needsYou ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+    );
+    item.id = `comments:${node.session.id}`;
+    item.iconPath = new vscode.ThemeIcon('comment-discussion');
+    item.description = String(comments.length);
+    item.contextValue = 'comments';
+    return item;
+  }
+
+  private draftsItem(): vscode.TreeItem {
+    const item = new vscode.TreeItem('Drafts', vscode.TreeItemCollapsibleState.Expanded);
+    item.id = 'drafts';
+    item.iconPath = new vscode.ThemeIcon('edit');
+    item.description = String(this.drafts().length);
+    item.tooltip = "Comments not queued on a session (or whose session isn't listed)";
+    item.contextValue = 'drafts';
+    return item;
+  }
+
+  private commentItem(comment: CodeComment): vscode.TreeItem {
+    const display = COMMENT_DISPLAY[comment.status];
+    const firstLine = comment.text.split('\n').find((line) => line.trim())?.trim() ?? '';
+    const item = new vscode.TreeItem(firstLine, vscode.TreeItemCollapsibleState.None);
+    item.id = `comment:${comment.id}`;
+    item.iconPath = display.icon;
+    const lines =
+      comment.startLine === comment.endLine ? `${comment.startLine + 1}` : `${comment.startLine + 1}-${comment.endLine + 1}`;
+    item.description = `${path.basename(comment.file)}:${lines} · ${display.label}`;
+    const lastReply = comment.replies.at(-1);
+    item.tooltip = new vscode.MarkdownString(
+      [
+        `**${display.label}** · ${tildify(comment.file)}:${lines}`,
+        comment.text,
+        lastReply && `**${lastReply.author === 'claude' ? 'Claude' : 'You'}:** ${lastReply.text}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    );
+    // Matched by `viewItem` in package.json menu `when` clauses.
+    item.contextValue = `comment:${comment.status}`;
+    item.command = { command: 'spool.openComment', title: 'Open Comment', arguments: [comment] };
+    return item;
+  }
+}
+
+function sortComments(comments: CodeComment[]): CodeComment[] {
+  return comments.sort(
+    (a, b) => COMMENT_ORDER.indexOf(a.status) - COMMENT_ORDER.indexOf(b.status) || a.createdAt - b.createdAt,
+  );
 }
 
 function tildify(dir: string): string {

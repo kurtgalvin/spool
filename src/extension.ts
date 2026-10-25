@@ -11,7 +11,7 @@ import { brokerSocketPath } from './ipc';
 import { watchNeedsInput } from './notifications';
 import { JsonFiles } from './persistence';
 import { SavedSession, Session, SessionStore } from './sessions';
-import { SessionTreeProvider, isGroup } from './sessionTree';
+import { SessionTreeProvider, isSession } from './sessionTree';
 
 const LIVENESS_CHECK_MS = 5_000;
 
@@ -86,6 +86,11 @@ export async function activate(context: vscode.ExtensionContext) {
     session.terminal?.sendText(`claude ${claudeArgs.map(shellQuote).join(' ')}`);
     session.terminal?.show();
   };
+
+  /** Thread-title actions get a comment thread; the same actions on a sidebar row get the comment. */
+  type CommentTarget = vscode.CommentThread | CodeComment;
+  const commentOf = (target: CommentTarget) => ('startLine' in target ? target : threads.commentFor(target));
+  let lastRevealedReply: string | undefined;
 
   context.subscriptions.push(
     // From a group's row: start in that group's folder. Otherwise in a workspace folder.
@@ -176,27 +181,27 @@ export async function activate(context: vscode.ExtensionContext) {
         await startWithComment(thread, reply, '--resume', parent.claudeSessionId, '--fork-session');
       }
     }),
-    vscode.commands.registerCommand('spool.queueDraft', async (thread: vscode.CommentThread) => {
-      const comment = threads.commentFor(thread);
+    vscode.commands.registerCommand('spool.queueDraft', async (target: CommentTarget) => {
+      const comment = commentOf(target);
       const session = comment && (await pickSession(comment.file, store));
       if (comment && session) {
         comments.queue(comment, session.id);
       }
     }),
-    vscode.commands.registerCommand('spool.resolveComment', (thread: vscode.CommentThread) => {
-      const comment = threads.commentFor(thread);
+    vscode.commands.registerCommand('spool.resolveComment', (target: CommentTarget) => {
+      const comment = commentOf(target);
       if (comment) {
         comments.setResolved(comment, true);
       }
     }),
-    vscode.commands.registerCommand('spool.reopenComment', (thread: vscode.CommentThread) => {
-      const comment = threads.commentFor(thread);
+    vscode.commands.registerCommand('spool.reopenComment', (target: CommentTarget) => {
+      const comment = commentOf(target);
       if (comment) {
         comments.setResolved(comment, false);
       }
     }),
-    vscode.commands.registerCommand('spool.deleteComment', (thread: vscode.CommentThread) => {
-      const comment = threads.commentFor(thread);
+    vscode.commands.registerCommand('spool.deleteComment', (target: CommentTarget) => {
+      const comment = commentOf(target);
       if (comment) {
         comments.delete(comment);
       }
@@ -214,6 +219,34 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('spool.replyCommentLater', (reply: vscode.CommentReply) => {
       threads.reply(reply);
     }),
+    // From a comment's row in the sidebar.
+    vscode.commands.registerCommand('spool.openComment', (comment: CodeComment) => threads.reveal(comment)),
+    vscode.commands.registerCommand('spool.sendQueuedComment', async (comment: CodeComment) => {
+      const session = store.all.find((s) => s.id === comment.sessionId);
+      if (session?.terminal && session.status !== 'exited') {
+        await send(session, [comment]);
+      } else {
+        vscode.window.showInformationMessage("The comment's session isn't running in this window.");
+      }
+    }),
+    vscode.commands.registerCommand('spool.nextReply', async () => {
+      const replied = comments.all
+        .filter((comment) => comment.status === 'replied')
+        .sort((a, b) => (a.replies.at(-1)?.at ?? 0) - (b.replies.at(-1)?.at ?? 0));
+      if (!replied.length) {
+        vscode.window.showInformationMessage('No replies waiting.');
+        return;
+      }
+      // Oldest reply first; after the last one shown, go round again.
+      const index = replied.findIndex((comment) => comment.id === lastRevealedReply);
+      const next = replied[(index + 1) % replied.length];
+      lastRevealedReply = next.id;
+      await threads.reveal(next);
+      const element = treeProvider.elementFor(next);
+      if (element && view.visible) {
+        await view.reveal(element, { select: true, focus: false });
+      }
+    }),
     vscode.commands.registerCommand('spool.sendComments', (session: Session) =>
       send(session, comments.queuedOn(session.id)),
     ),
@@ -223,7 +256,8 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
   );
 
-  const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: new SessionTreeProvider(store, comments) });
+  const treeProvider = new SessionTreeProvider(store, comments);
+  const view = vscode.window.createTreeView('spool.sessions', { treeDataProvider: treeProvider });
   context.subscriptions.push(
     view,
     watchNeedsInput(store, view),
@@ -237,7 +271,7 @@ export async function activate(context: vscode.ExtensionContext) {
     store.onDidTakeOverTerminal((session) => threads.setQueueTarget(session)),
     view.onDidChangeSelection(({ selection }) => {
       const [element] = selection;
-      if (element && !isGroup(element)) {
+      if (element && isSession(element)) {
         threads.setQueueTarget(element);
       }
     }),

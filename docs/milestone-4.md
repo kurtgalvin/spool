@@ -64,12 +64,17 @@ Queuing lets several comments go to one session as a single review.
      answered, you haven't resolved it) counts; collapsed groups summarize replies like
      they summarize sessions needing input.
    - Expanding a session shows a **Comments** node (kept apart from its side threads) with
-     its threads: status icon, file and line, first line of text. Clicking one opens the code
-     with the thread expanded; inline actions send, resolve, or delete.
+     its threads: status icon, first line of text, file:line and status. Threads needing you
+     (replied, then queued) come first, resolved ones last; the node starts open while any
+     thread needs you. Clicking a thread opens the code with the thread expanded; inline
+     actions send (queued), queue (draft), resolve / reopen, and delete. The tooltip shows
+     the comment and the latest reply.
    - Comments sit under the session they went to, so branched comments appear under their
      side thread (nested under its parent) and new-session ones under their new session.
-     Drafts, which have no session, are under a **Drafts** row at the top.
-   - **Next Reply** (with a keybinding) cycles through threads Claude has answered.
+     Drafts, and comments whose session isn't listed (removed, or exited in a folder not
+     open here), are under a **Drafts** row at the top.
+   - **Next Reply** (Cmd+Alt+N, Ctrl+Alt+N elsewhere) opens the replied threads in turn,
+     oldest reply first, and selects each in the sidebar.
    - Spool's activity-bar badge stays sessions needing input; VS Code's Comments badge
      covers replies.
 
@@ -153,8 +158,8 @@ the design is in the [backlog](backlog.md)).
 - **Comment UI:** show Claude's icon on its replies; let you edit drafts and queued
   comments; let Claude leave comments itself (a `comment(file, lines, text)` tool) for
   review passes.
-- **Row text:** "idle · 1 comment" gets truncated in a narrow sidebar; shorten it, or use an
-  icon?
+- **Row text:** "idle · 1 queued · 1 replied" can be truncated in a narrow sidebar; use
+  icons instead?
 - **Clearing old threads:** delete resolved threads after a while, or keep them until
   you clear them?
 - **Ambiguous comments** ("this looks off?") could be read as a question or a change. If
