@@ -20,10 +20,6 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap,
 - **Duplicate toasts after reload.** The broker replays the last minute of hooks to a
   reloaded window, so a permission prompt already answered can toast again. (The final
   status is right.) Skip toasts for replayed events.
-- **Hooks need `node` on PATH.** The hook command is `node "$SPOOL_HOOK_SCRIPT"`; with the
-  native Claude installer and no Node, every hook fails silently. Blocker for the
-  Marketplace. Options: run the hook with VS Code's executable (`ELECTRON_RUN_AS_NODE`,
-  slower to start), or a tiny shell/compiled sender.
 
 ## Features
 
@@ -96,4 +92,5 @@ details are from memory; check its docs and `.tour` schema before building.
 ## Later / Marketplace
 
 - Windows support (named pipe instead of a Unix socket).
-- Repository URL, icon, and README for publishing.
+- An icon (PNG) and a Marketplace and Open VSX listing. Releases on GitHub are done
+  ([milestone 7](milestone-7.md)).

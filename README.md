@@ -18,10 +18,33 @@ Not affiliated with Anthropic. See [docs/design.md](docs/design.md) for how it w
 - macOS or Linux (Windows isn't supported yet).
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installed, with `claude` on your
   PATH.
-- Node.js and npm on your PATH. Spool builds with npm, and its hooks and MCP server run with
-  `node`.
 
 ## Install
+
+Download the [latest release](https://github.com/kurtgalvin/spool/releases/latest) and install
+it:
+
+```sh
+# VS Code
+curl -fsSL https://github.com/kurtgalvin/spool/releases/latest/download/spool.vsix -o /tmp/spool.vsix && code --install-extension /tmp/spool.vsix
+
+# Cursor
+curl -fsSL https://github.com/kurtgalvin/spool/releases/latest/download/spool.vsix -o /tmp/spool.vsix && cursor --install-extension /tmp/spool.vsix
+```
+
+(Or download `spool.vsix` from the release page and drag it into the editor's Extensions
+view.) Then reload the editor window (**Developer: Reload Window** in the Command Palette).
+
+The `code` and `cursor` commands come from the editor: if one isn't found, run **Shell
+Command: Install 'code' command in PATH** (or **'cursor'**) from its Command Palette first.
+
+To update, run the same command again and reload. If an update changes the
+broker (the background process that relays hooks), also run **Spool: Restart Broker**.
+
+### From a clone
+
+Building Spool yourself also needs Node.js with npm, and [Rust](https://rustup.rs) for the
+hook:
 
 ```sh
 git clone https://github.com/kurtgalvin/spool.git
@@ -31,14 +54,7 @@ npm run install:code     # VS Code
 npm run install:cursor   # Cursor
 ```
 
-Then reload the editor window (**Developer: Reload Window** in the Command Palette).
-
-The install scripts use the editor's command-line tool. If `code` or `cursor` isn't found,
-run **Shell Command: Install 'code' command in PATH** (or **'cursor'**) from the editor's
-Command Palette first.
-
-To update: `git pull`, run the install script again, and reload. If an update changes the
-broker (the background process that relays hooks), also run **Spool: Restart Broker**.
+To update: `git pull`, run the install script again, and reload.
 
 ## Use
 

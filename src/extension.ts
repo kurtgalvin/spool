@@ -1,4 +1,6 @@
+import { execFile } from 'child_process';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -76,7 +78,13 @@ export async function activate(context: vscode.ExtensionContext) {
   // Hooks, and permission for Spool's MCP tools.
   const settingsPath = context.asAbsolutePath('resources/spool-settings.json');
   const mcpConfigPath = context.asAbsolutePath('resources/spool-mcp.json');
-  const hookScriptPath = context.asAbsolutePath('out/hook.js');
+  const hookPath = context.asAbsolutePath(`bin/${process.platform}-${process.arch}/spool-hook`);
+  void checkHook(hookPath).then((problem) => {
+    if (problem) {
+      log.error(`hook check failed: ${problem}`);
+      void vscode.window.showErrorMessage(`Spool: ${problem} Sessions will start, but their status won't update.`);
+    }
+  });
   const openTerminal = (terminalId: string, name: string, cwd?: string | vscode.Uri) =>
     vscode.window.createTerminal({
       name,
@@ -84,7 +92,9 @@ export async function activate(context: vscode.ExtensionContext) {
       env: {
         SPOOL_ID: terminalId,
         SPOOL_SOCKET: broker.socketPath,
-        SPOOL_HOOK_SCRIPT: hookScriptPath,
+        SPOOL_HOOK: hookPath,
+        // The MCP server runs on the editor's own executable as Node (see resources/spool-mcp.json).
+        SPOOL_NODE: process.execPath,
         SPOOL_MCP_SCRIPT: context.asAbsolutePath('out/mcp.js'),
         SPOOL_STORAGE: storageDir,
       },
@@ -449,6 +459,26 @@ async function typeIntoClaude(terminal: vscode.Terminal, line: string): Promise<
   terminal.sendText(line, false);
   await new Promise((resolve) => setTimeout(resolve, 150));
   terminal.sendText('\r', false);
+}
+
+/**
+ * Makes sure the hook binary for this platform is there and runs; returns what's wrong if not.
+ * A .vsix can lose the executable bit, so that's restored first.
+ */
+async function checkHook(hookPath: string): Promise<string | undefined> {
+  if (!fs.existsSync(hookPath)) {
+    return `no hook built for ${process.platform}-${process.arch}.`;
+  }
+  try {
+    fs.chmodSync(hookPath, 0o755);
+  } catch {
+    // Checked by running it below.
+  }
+  return new Promise((resolve) => {
+    execFile(hookPath, ['--version'], { timeout: 5_000 }, (err) =>
+      resolve(err ? `the hook couldn't run (${err.message.trim()}).` : undefined),
+    );
+  });
 }
 
 function withTimeout<T>(promise: Thenable<T>, ms: number): Promise<T | undefined> {

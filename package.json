@@ -2,7 +2,7 @@
   "name": "spool",
   "displayName": "Spool",
   "description": "Manage multiple Claude Code terminal sessions",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "kurtgalvin",
   "license": "Apache-2.0",
   "repository": {
@@ -634,9 +634,10 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
+    "build:hook": "node scripts/build-hook.js",
     "package": "vsce package -o spool.vsix",
-    "install:code": "npm run package && code --install-extension spool.vsix --force",
-    "install:cursor": "npm run package && cursor --install-extension spool.vsix --force"
+    "install:code": "npm run build:hook && npm run package && code --install-extension spool.vsix --force",
+    "install:cursor": "npm run build:hook && npm run package && cursor --install-extension spool.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

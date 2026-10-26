@@ -2,7 +2,7 @@
  * Spool's broker: the one listener on the per-user socket, so hooks have a single address no
  * matter which VS Code window launched their session.
  *
- * - Hook scripts connect, send one HookMessage, and disconnect.
+ * - Hooks connect, send one HookMessage, and disconnect.
  * - Windows (extension hosts) connect, send `subscribe`, and receive every HookMessage; each
  *   window ignores terminals it doesn't own. They ping every PING_INTERVAL_MS.
  *

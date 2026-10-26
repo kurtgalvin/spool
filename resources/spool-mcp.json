@@ -1,5 +1,9 @@
 {
   "mcpServers": {
-    "spool": { "command": "node", "args": ["${SPOOL_MCP_SCRIPT}"] }
+    "spool": {
+      "command": "${SPOOL_NODE}",
+      "args": ["${SPOOL_MCP_SCRIPT}"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
   }
 }

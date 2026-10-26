@@ -5,12 +5,12 @@
     ]
   },
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "Notification": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node \"$SPOOL_HOOK_SCRIPT\"" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"$SPOOL_HOOK\"" }] }]
   }
 }

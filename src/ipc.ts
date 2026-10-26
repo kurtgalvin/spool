@@ -1,5 +1,5 @@
 /**
- * Wire protocol shared by the hook script, the broker, and the extension. Everything is
+ * Wire protocol shared by the hook (hook/), the broker, and the extension. Everything is
  * newline-delimited JSON over one per-user Unix socket owned by the broker (see broker.ts).
  */
 import * as net from 'net';
@@ -17,7 +17,7 @@ export const PING_INTERVAL_MS = 2_000;
 /** Long enough to survive a window reload, during which nothing pings. */
 export const BROKER_IDLE_EXIT_MS = 60_000;
 
-/** A hook event forwarded by the hook script, tagged with the terminal it came from. */
+/** A hook event forwarded by the hook, tagged with the terminal it came from. */
 export interface HookMessage {
   spoolId: string;
   payload: Record<string, unknown>;

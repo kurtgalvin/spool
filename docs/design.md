@@ -42,14 +42,16 @@ Marketplace release — e.g. never modify the user's global Claude Code config.
                      $TMPDIR/spool-<uid>-v1.sock
                               ▲
                               │ one line per hook
- claude (terminal) ─ hook ─► spool-hook script (SPOOL_ID + payload)
+ claude (terminal) ─ hook ─► spool-hook binary (SPOOL_ID + payload)
 ```
 
 ### Broker
 
 - The first window that needs it spawns `out/broker.js` detached (using the extension
   host's own executable with `ELECTRON_RUN_AS_NODE`), so it outlives reloads.
-- Hook scripts connect, send one message, and close. Windows send `subscribe`, then `ping`
+- Hooks connect, send one message, and close. The hook is a small Rust binary (`hook/`),
+  so it needs no `node` on PATH; Spool's MCP server runs on the editor's executable like the
+  broker ([milestone 7](milestone-7.md)). Windows send `subscribe`, then `ping`
   every 2s, and receive every hook message; each window ignores terminals it doesn't own.
 - Exits after 60s without a ping from any window (long enough to survive a reload).
 - Replays the last minute of messages to a new subscriber, so hooks fired mid-reload
@@ -178,6 +180,9 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 - **Claude's comments and walkthroughs** ([milestone 6](milestone-6.md)): filters and a
   changed-since check when Claude reads comments; Claude leaving comments, and walkthroughs
   (ordered steps across files) you step through and reply on.
+- **No Node needed, releases on GitHub** ([milestone 7](milestone-7.md)): the hook in Rust,
+  the MCP server on the editor's runtime, and a `.vsix` with every platform's hook attached to
+  each GitHub Release.
 - **Resume group** after reload: relaunch every session in a group with `--resume`.
 
 ### Later

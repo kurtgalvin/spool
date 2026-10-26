@@ -6,3 +6,6 @@ tsconfig.json
 eslint.config.mjs
 .gitignore
 *.vsix
+hook/**
+scripts/**
+.github/**
