@@ -104,6 +104,8 @@ and changes this session's comments and walkthroughs.
      Claude can't remove a step you replied to (that would delete your words); it can add a
      step or edit its own text instead. Added steps are **new**; the instructions say to
      mention what changed in the reply. You can delete any step, or the whole walkthrough.
+   - An exited session stays in the Sessions view while it has steps or comments from Claude
+     you haven't opened, so a new walkthrough isn't buried in History.
    - **Badge:** a step adds nothing to VS Code's Comments badge until it has a thread you
      replied in and Claude answered; then it's a normal **replied** thread. Steps count in
      the session's replied count, and Next Reply visits them, on the same rule.

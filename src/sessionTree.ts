@@ -58,10 +58,14 @@ export function isWalkthrough(element: SessionTreeElement): element is Walkthrou
   return 'steps' in element;
 }
 
-/** Comments waiting on you: Claude replied (see awaitsYou), or they're queued to send. */
+/**
+ * Comments waiting on you: Claude replied (see awaitsYou), Claude wrote something you haven't
+ * opened (e.g. a new walkthrough), or they're queued to send.
+ */
 export function needsYou(session: Session, comments: CommentStore): boolean {
   return comments.all.some(
-    (comment) => comment.sessionId === session.id && (awaitsYou(comment) || comment.status === 'queued'),
+    (comment) =>
+      comment.sessionId === session.id && (awaitsYou(comment) || comment.unseen || comment.status === 'queued'),
   );
 }
 
