@@ -35,6 +35,12 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
   `[Request interrupted by user for tool use]`; a long quiet stretch could cover Esc.
 - **OS notifications** when VS Code isn't focused.
 - **Duplicate group names:** disambiguate two repos with the same folder name in the label.
+- **Remote Control button.** An action on a running session's row that turns on Claude
+  Code's remote control, by typing `/remote-control` into it the way comment prompts are
+  typed (one line, Enter sent separately). Show which sessions have it on: Claude's process
+  registry (`~/.claude/sessions/<pid>.json`) has a `bridgeSessionId` while it's connected,
+  so the row could get an icon or "remote" in its description. Check how the command
+  behaves when it's already on, and whether it needs the user to confirm anything.
 - **Home-folder trust prompt:** with no folder open, sessions start in `~`, where Claude
   never saves trust, so the prompt reappears every launch. Ask for a folder instead (or a
   `spool.defaultFolder` setting).
@@ -46,6 +52,27 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
   toggled on any running session. Bash is denied completely, since shell commands can write
   files. Caveat: hooks fail open, so with no `node` on PATH read-only silently does nothing;
   warn on sessions whose hooks never fired.
+
+## Other agents
+
+- **Put Claude Code behind an agent interface**, so other CLI agents can be added later.
+  Today Claude-specific code is spread through the extension:
+  - launching: the `claude` command and its flags (`--settings`, `--mcp-config`,
+    `--resume`, `--fork-session`), and the settings and MCP config files in `resources/`;
+  - status: hook event names and payloads, and how they map to statuses (`status.ts`), plus
+    the hook script and settings that install the hooks;
+  - session identity: `session_id` from SessionStart, how `/clear` and `/resume` show up;
+  - typing into the TUI: the 150ms gap before Enter so it isn't taken as a paste;
+  - history: transcript paths and line formats, and the process registry (`history.ts`);
+  - naming from prompts, and what the MCP instructions assume.
+
+  An `Agent` interface would cover those: how to launch, resume and fork; how to install
+  its hooks and turn their events into statuses; how to submit a line; where its history
+  lives and how to read it; which capabilities it has (forking, MCP, remote control), so
+  the UI hides what an agent can't do. Claude Code becomes the first implementation.
+  Spool's own parts (sessions, groups, the broker, comments, the MCP server's tools) stay
+  agent-neutral. Worth doing before a second agent, not before: the interface should come
+  from what two agents actually need.
 
 ## Walkthroughs
 
