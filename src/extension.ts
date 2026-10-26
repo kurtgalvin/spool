@@ -399,7 +399,7 @@ function isInOpenFolder(session: SavedSession): boolean {
 
 function commentsPrompt(count: number): string {
   const comments = count === 1 ? 'a code comment' : `${count} code comments`;
-  return `Spool: you have ${comments} from me. Read them with the spool get_comments tool and reply to each.`;
+  return `Spool: you have ${comments} from me. Read them with the spool read_comments tool and reply to each.`;
 }
 
 /**

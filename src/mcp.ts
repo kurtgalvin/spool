@@ -7,6 +7,7 @@
  * no session argument, so a session can only see and answer its own comments. Comments are
  * read and written as files in Spool's global storage; windows watch those files.
  */
+import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import type { CodeComment } from './comments';
@@ -16,25 +17,42 @@ import type { SavedSession } from './sessions';
 const spoolId = process.env.SPOOL_ID;
 const storage = process.env.SPOOL_STORAGE;
 
+/** Wide reads (anything but the default) return at most this many comments, newest first. */
+const READ_LIMIT = 20;
+
 const INSTRUCTIONS = `Spool delivers code comments the user left in their editor. When told you have comments, \
-call get_comments, then handle each one: a change request (make the change) or a question (answer it). \
-Reply to every comment with the reply tool: a short summary of what you did, or the answer. The user \
-resolves threads after reading your replies.`;
+call read_comments with no arguments, then handle each one: a change request (make the change) or a question \
+(answer it). Reply to every comment with reply_to_comment: a short summary of what you did, or the answer. The \
+user resolves threads after reading your replies. read_comments' filters are for background, e.g. what the user \
+said about a file before you change it; don't answer resolved threads.`;
 
 const TOOLS = [
   {
-    name: 'get_comments',
+    name: 'read_comments',
     description:
-      "Get the code comments the user sent to this session that have no reply yet, each with its thread so far. Answer the thread's latest message.",
-    inputSchema: { type: 'object', properties: {} },
+      "Read the code comments the user sent to this session, each with its thread so far and whether the code changed since. With no arguments: the comments waiting for your answer (answer each thread's latest message). Filters look up older comments without changing them.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['waiting', 'replied', 'resolved', 'all'],
+          description:
+            "waiting (default): sent to you, not answered yet. replied: you answered, the user hasn't resolved it. resolved: done. all: any.",
+        },
+        file: { type: 'string', description: 'Only comments on this file (absolute, or relative to your working directory)' },
+        start_line: { type: 'number', description: "With file: only comments overlapping these lines (1-based)" },
+        end_line: { type: 'number', description: 'With file: end of the line range (1-based, inclusive)' },
+      },
+    },
   },
   {
-    name: 'reply',
+    name: 'reply_to_comment',
     description: "Reply in a comment's thread in the user's editor. Keep it short.",
     inputSchema: {
       type: 'object',
       properties: {
-        comment_id: { type: 'string', description: 'The id from get_comments' },
+        comment_id: { type: 'string', description: 'The id from read_comments' },
         text: { type: 'string', description: 'The reply, in markdown' },
       },
       required: ['comment_id', 'text'],
@@ -63,24 +81,162 @@ function ownComments(files: JsonFiles<CodeComment>): CodeComment[] {
   return files.loadAll().filter((comment) => comment.sessionId && sessionIds.has(comment.sessionId));
 }
 
-function formatComment(comment: CodeComment): string {
+type Status = 'waiting' | 'replied' | 'resolved' | 'all';
+
+const STATUS_NOTE: Record<CodeComment['status'], string> = {
+  draft: 'draft',
+  queued: 'queued',
+  sent: 'waiting for your answer',
+  read: 'waiting for your answer',
+  replied: "answered; the user hasn't resolved it",
+  resolved: 'resolved by the user',
+};
+
+function matchesStatus(comment: CodeComment, status: Status): boolean {
+  switch (status) {
+    case 'waiting':
+      return comment.status === 'sent' || comment.status === 'read';
+    case 'replied':
+      return comment.status === 'replied';
+    case 'resolved':
+      return comment.status === 'resolved';
+    case 'all':
+      return comment.status !== 'draft' && comment.status !== 'queued';
+  }
+}
+
+/** Where a comment's code is now. Lines are 0-based. */
+type Location =
+  | { kind: 'unchanged' }
+  | { kind: 'moved'; startLine: number; endLine: number }
+  | { kind: 'changed'; current?: string }
+  | { kind: 'missing' };
+
+/**
+ * Compares a comment's snapshot with its file, ignoring indentation: still at its lines, moved
+ * elsewhere in the file (the nearest match), changed, or the file is gone.
+ */
+function locate(comment: Pick<CodeComment, 'code' | 'startLine' | 'endLine'>, fileText: string | undefined): Location {
+  if (fileText === undefined) {
+    return { kind: 'missing' };
+  }
+  const lines = fileText.split('\n').map((line) => line.replace(/\r$/, ''));
+  const snapshot = comment.code.split('\n').map((line) => line.trim());
+  const at = (start: number) => snapshot.every((line, i) => lines[start + i]?.trim() === line);
+  if (at(comment.startLine)) {
+    return { kind: 'unchanged' };
+  }
+  // Blank lines would match anywhere.
+  if (snapshot.some(Boolean)) {
+    let best: number | undefined;
+    for (let start = 0; start + snapshot.length <= lines.length; start++) {
+      if (at(start) && (best === undefined || Math.abs(start - comment.startLine) < Math.abs(best - comment.startLine))) {
+        best = start;
+      }
+    }
+    if (best !== undefined) {
+      return { kind: 'moved', startLine: best, endLine: best + snapshot.length - 1 };
+    }
+  }
+  const current = lines.slice(comment.startLine, comment.endLine + 1);
+  return { kind: 'changed', current: current.length ? current.join('\n') : undefined };
+}
+
+function lineRange(start: number, end: number): string {
+  return start === end ? `line ${start + 1}` : `lines ${start + 1}-${end + 1}`;
+}
+
+function fenced(code: string): string[] {
   let fence = '```';
-  while (comment.code.includes(fence)) {
+  while (code.includes(fence)) {
     fence += '`';
   }
-  const lines =
-    comment.startLine === comment.endLine
-      ? `line ${comment.startLine + 1}`
-      : `lines ${comment.startLine + 1}-${comment.endLine + 1}`;
+  return [fence, code, fence];
+}
+
+function formatComment(comment: CodeComment, location: Location): string {
+  const status =
+    location.kind === 'unchanged'
+      ? 'Code: unchanged since the comment.'
+      : location.kind === 'moved'
+        ? `Code: moved to ${lineRange(location.startLine, location.endLine)}.`
+        : location.kind === 'missing'
+          ? 'Code: file not found (deleted or renamed).'
+          : location.current === undefined
+            ? 'Code: changed since the comment; those lines no longer exist.'
+            : 'Code: changed since the comment. Those lines now read:';
   return [
-    `## Comment ${comment.id}`,
-    `${comment.file} (${lines}, as it was when commented):`,
-    fence,
-    comment.code,
-    fence,
+    `## Comment ${comment.id} (${STATUS_NOTE[comment.status]})`,
+    `${comment.file} (${lineRange(comment.startLine, comment.endLine)}, as it was when commented):`,
+    ...fenced(comment.code),
+    status,
+    ...(location.kind === 'changed' && location.current !== undefined ? fenced(location.current) : []),
     `User: ${comment.text}`,
     ...comment.replies.map((reply) => `${reply.author === 'claude' ? 'Claude' : 'User'}: ${reply.text}`),
   ].join('\n');
+}
+
+function readFile(file: string, cache: Map<string, string | undefined>): string | undefined {
+  if (!cache.has(file)) {
+    try {
+      cache.set(file, fs.readFileSync(file, 'utf8'));
+    } catch {
+      cache.set(file, undefined);
+    }
+  }
+  return cache.get(file);
+}
+
+function lastActivity(comment: CodeComment): number {
+  return comment.replies.at(-1)?.at ?? comment.createdAt;
+}
+
+function readComments(files: JsonFiles<CodeComment>, own: CodeComment[], args: Record<string, unknown>): ToolResult {
+  const status = (args.status ?? 'waiting') as Status;
+  if (!['waiting', 'replied', 'resolved', 'all'].includes(status)) {
+    return text(`Unknown status ${String(args.status)}.`, true);
+  }
+  const file = typeof args.file === 'string' && args.file ? path.resolve(args.file) : undefined;
+  const startLine = typeof args.start_line === 'number' ? args.start_line - 1 : undefined;
+  const endLine = typeof args.end_line === 'number' ? args.end_line - 1 : startLine;
+  if (startLine !== undefined && !file) {
+    return text('start_line needs file.', true);
+  }
+  // The default read is how new comments are delivered; any filter is a lookup.
+  const isDefault = args.status === undefined && !file;
+  const contents = new Map<string, string | undefined>();
+  let matches = own
+    .filter((comment) => matchesStatus(comment, status) && (!file || comment.file === file))
+    .map((comment) => ({ comment, location: locate(comment, readFile(comment.file, contents)) }))
+    .filter(({ comment, location }) => {
+      if (startLine === undefined) {
+        return true;
+      }
+      const [start, end] =
+        location.kind === 'moved' ? [location.startLine, location.endLine] : [comment.startLine, comment.endLine];
+      return start <= endLine! && end >= startLine;
+    });
+  if (!matches.length) {
+    return text(isDefault ? 'No comments waiting.' : 'No comments match.');
+  }
+  let more = 0;
+  if (status !== 'waiting') {
+    matches.sort((a, b) => lastActivity(b.comment) - lastActivity(a.comment));
+    more = Math.max(0, matches.length - READ_LIMIT);
+    matches = matches.slice(0, READ_LIMIT);
+  }
+  if (isDefault) {
+    for (const { comment } of matches) {
+      if (comment.status === 'sent') {
+        files.save({ ...comment, status: 'read' });
+      }
+    }
+  }
+  const count = matches.length === 1 ? '1 comment' : `${matches.length} comments`;
+  const header = isDefault
+    ? `${count}. Reply to each with reply_to_comment, passing its id.`
+    : `${count}${more ? ` (the newest; ${more} more match)` : ''}.`;
+  return text(`${header}\n\n${matches.map(({ comment, location }) => formatComment(comment, location)).join('\n\n')}`);
 }
 
 function callTool(name: string | undefined, args: Record<string, unknown>): ToolResult {
@@ -89,22 +245,10 @@ function callTool(name: string | undefined, args: Record<string, unknown>): Tool
   }
   const files = new JsonFiles<CodeComment>(path.join(storage, 'comments'));
   const own = ownComments(files);
-  if (name === 'get_comments') {
-    const pending = own.filter((comment) => comment.status === 'sent' || comment.status === 'read');
-    if (!pending.length) {
-      return text('No comments waiting.');
-    }
-    for (const comment of pending) {
-      if (comment.status === 'sent') {
-        files.save({ ...comment, status: 'read' });
-      }
-    }
-    const count = pending.length === 1 ? '1 comment' : `${pending.length} comments`;
-    return text(
-      `${count}. Reply to each with the reply tool, passing its id.\n\n${pending.map(formatComment).join('\n\n')}`,
-    );
+  if (name === 'read_comments') {
+    return readComments(files, own, args);
   }
-  if (name === 'reply') {
+  if (name === 'reply_to_comment') {
     const comment = own.find((c) => c.id === args.comment_id);
     if (!comment) {
       return text(`No comment ${String(args.comment_id)} for this session.`, true);
