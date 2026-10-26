@@ -1,7 +1,8 @@
 # Backlog
 
 Fixes and features found in the review after milestone 3 (2026-10-24), roughly in the order
-we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
+we'd tackle them. See [design.md](design.md) for the overall design and roadmap, and
+[ideas.md](ideas.md) for bigger, less settled directions.
 
 ## Hardening
 
