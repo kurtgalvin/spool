@@ -47,6 +47,24 @@ we'd tackle them. See [design.md](design.md) for the overall design and roadmap.
   files. Caveat: hooks fail open, so with no `node` on PATH read-only silently does nothing;
   warn on sessions whose hooks never fired.
 
+## Walkthroughs
+
+Ideas from Microsoft's CodeTour extension, which plays back hand-written tours using the
+same Comments API threads and Previous / Next (see [milestone 6](milestone-6.md)). CodeTour's
+details are from memory; check its docs and `.tour` schema before building.
+
+- **Export to CodeTour.** Save a walkthrough as `.tours/<title>.tour` in the repo, so a good
+  explanation becomes onboarding docs anyone with CodeTour can play, without Spool. The
+  format is JSON with a file, line and markdown description per step. Most valuable of
+  these: it turns a one-off answer into something the team keeps.
+- **Steps that follow the code.** CodeTour can anchor a step to a text pattern instead of a
+  line, and record the commit a tour was written against to warn when code changed. Ours
+  could re-anchor a step when the changed-since check finds its code moved (an open
+  question in milestone 6), and show "changed since" on a stale step.
+- **Steps without code.** A text-only step (an intro or summary) or a step on a folder, so
+  Claude can open with the big picture before step 1. Needs a home in the editor, since a
+  comment thread needs a file and line: maybe the walkthrough's first file, or a webview.
+
 ## Later / Marketplace
 
 - Windows support (named pipe instead of a Unix socket).

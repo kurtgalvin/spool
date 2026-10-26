@@ -568,28 +568,28 @@
         },
         {
           "command": "spool.nextStep",
-          "group": "inline@0",
+          "group": "inline@1",
           "when": "commentController == spool && commentThread =~ /:step:(first|middle)$/"
         },
         {
           "command": "spool.queueDraft",
           "when": "commentController == spool && commentThread =~ /^(draft|queued)$/",
-          "group": "inline@1"
+          "group": "inline@2"
         },
         {
           "command": "spool.resolveComment",
           "when": "commentController == spool && commentThread =~ /^(sent|read|replied)(:|$)/",
-          "group": "inline@2"
+          "group": "inline@3"
         },
         {
           "command": "spool.reopenComment",
           "when": "commentController == spool && commentThread =~ /^resolved(:|$)/",
-          "group": "inline@2"
+          "group": "inline@3"
         },
         {
           "command": "spool.deleteComment",
           "when": "commentController == spool && !commentThreadIsEmpty",
-          "group": "inline@3"
+          "group": "inline@4"
         }
       ],
       "editor/context": [
