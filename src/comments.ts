@@ -33,6 +33,12 @@ export interface CodeComment {
   sessionId?: string;
   replies: ThreadReply[];
   createdAt: number;
+  /** Who started the thread; absent means you. Claude's comments start as replied: waiting on you. */
+  author?: 'claude';
+  /** Claude's comment you haven't opened yet. */
+  unseen?: boolean;
+  /** When Claude last rewrote its text. */
+  editedAt?: number;
 }
 
 export type NewComment = Pick<CodeComment, 'file' | 'startLine' | 'endLine' | 'code' | 'text'>;
@@ -90,7 +96,16 @@ export class CommentStore implements vscode.Disposable {
   addReply(comment: CodeComment, text: string): void {
     comment.replies.push({ author: 'you', text, at: Date.now() });
     comment.status = 'queued';
+    delete comment.unseen;
     this.save(comment);
+  }
+
+  /** You opened Claude's comment. */
+  markSeen(comment: CodeComment): void {
+    if (comment.unseen) {
+      delete comment.unseen;
+      this.save(comment);
+    }
   }
 
   /** Marks a comment done, or reopens it as replied. */

@@ -95,6 +95,7 @@ export class CommentThreads implements vscode.Disposable {
     if (thread) {
       thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
     }
+    this.comments.markSeen(comment);
   }
 
   commentFor(thread: vscode.CommentThread): CodeComment | undefined {
@@ -166,7 +167,12 @@ export class CommentThreads implements vscode.Disposable {
         thread.state = state;
       }
       thread.comments = [
-        { body: new vscode.MarkdownString(comment.text), mode: vscode.CommentMode.Preview, author: { name: 'You' } },
+        {
+          body: new vscode.MarkdownString(comment.text),
+          mode: vscode.CommentMode.Preview,
+          author: { name: comment.author === 'claude' ? 'Claude' : 'You' },
+          label: comment.editedAt ? 'edited' : undefined,
+        },
         ...comment.replies.map((reply) => ({
           body: new vscode.MarkdownString(reply.text),
           mode: vscode.CommentMode.Preview,
@@ -185,7 +191,11 @@ export class CommentThreads implements vscode.Disposable {
 
   private labelFor(comment: CodeComment): string {
     const session = comment.sessionId ? this.sessions.all.find((s) => s.id === comment.sessionId) : undefined;
-    const status = STATUS_LABEL[comment.status];
+    // Claude's own comment, not replied to yet, is waiting on you without having replied to anything.
+    const status =
+      comment.author === 'claude' && comment.status === 'replied' && !comment.replies.length
+        ? 'From Claude'
+        : STATUS_LABEL[comment.status];
     return comment.status === 'draft' ? status : `${status} · ${session?.name ?? 'session gone'}`;
   }
 }

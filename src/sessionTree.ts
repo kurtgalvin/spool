@@ -345,12 +345,14 @@ export function commentTreeItem(comment: CodeComment): vscode.TreeItem {
   item.iconPath = display.icon;
   const lines =
     comment.startLine === comment.endLine ? `${comment.startLine + 1}` : `${comment.startLine + 1}-${comment.endLine + 1}`;
-  item.description = `${path.basename(comment.file)}:${lines} · ${display.label}`;
+  const fromClaude = comment.author === 'claude';
+  const status = fromClaude && comment.status === 'replied' && !comment.replies.length ? 'from Claude' : display.label;
+  item.description = [`${path.basename(comment.file)}:${lines}`, status, comment.unseen && 'new'].filter(Boolean).join(' · ');
   const lastReply = comment.replies.at(-1);
   item.tooltip = new vscode.MarkdownString(
     [
-      `**${display.label}** · ${tildify(comment.file)}:${lines}`,
-      comment.text,
+      `**${status}** · ${tildify(comment.file)}:${lines}`,
+      fromClaude ? `**Claude:** ${comment.text}` : comment.text,
       lastReply && `**${lastReply.author === 'claude' ? 'Claude' : 'You'}:** ${lastReply.text}`,
     ]
       .filter(Boolean)

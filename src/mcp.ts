@@ -7,6 +7,7 @@
  * no session argument, so a session can only see and answer its own comments. Comments are
  * read and written as files in Spool's global storage; windows watch those files.
  */
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -24,7 +25,8 @@ const INSTRUCTIONS = `Spool delivers code comments the user left in their editor
 call read_comments with no arguments, then handle each one: a change request (make the change) or a question \
 (answer it). Reply to every comment with reply_to_comment: a short summary of what you did, or the answer. The \
 user resolves threads after reading your replies. read_comments' filters are for background, e.g. what the user \
-said about a file before you change it; don't answer resolved threads.`;
+said about a file before you change it; don't answer resolved threads. Use add_comment to leave the user a note on \
+code when they ask for one (a review, "point out…") or something needs their attention; never on every edit.`;
 
 const TOOLS = [
   {
@@ -58,6 +60,33 @@ const TOOLS = [
       required: ['comment_id', 'text'],
     },
   },
+  {
+    name: 'add_comment',
+    description:
+      "Leave the user a comment on code in their editor, starting a thread they can reply to. For a review, or something they need to look at; not for every edit.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Absolute, or relative to your working directory' },
+        start_line: { type: 'number', description: 'First line (1-based)' },
+        end_line: { type: 'number', description: 'Last line (1-based, inclusive); defaults to start_line' },
+        text: { type: 'string', description: 'The comment, in markdown' },
+      },
+      required: ['file', 'start_line', 'text'],
+    },
+  },
+  {
+    name: 'edit_comment',
+    description: 'Rewrite the text of a comment you started (not the user\'s comments, not replies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        comment_id: { type: 'string', description: 'The id from add_comment or read_comments' },
+        text: { type: 'string', description: 'The new text, in markdown' },
+      },
+      required: ['comment_id', 'text'],
+    },
+  },
 ];
 
 interface Request {
@@ -70,15 +99,49 @@ type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean
 
 const text = (value: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: value }], isError });
 
-/** This session's comments. A terminal can host several sessions in a row (/clear), so match on all of them. */
+/** The sessions that ran in this terminal: it can host several in a row (/clear). */
+function ownSessions(): SavedSession[] {
+  return new JsonFiles<SavedSession>(path.join(storage!, 'sessions'))
+    .loadAll()
+    .filter((session) => session.terminalId === spoolId);
+}
+
+/** This session's comments: on any session that ran in this terminal. */
 function ownComments(files: JsonFiles<CodeComment>): CodeComment[] {
-  const sessionIds = new Set(
-    new JsonFiles<SavedSession>(path.join(storage!, 'sessions'))
-      .loadAll()
-      .filter((session) => session.terminalId === spoolId)
-      .map((session) => session.id),
-  );
+  const sessionIds = new Set(ownSessions().map((session) => session.id));
   return files.loadAll().filter((comment) => comment.sessionId && sessionIds.has(comment.sessionId));
+}
+
+/** The session running in this terminal now, which new comments attach to. */
+function currentSession(): SavedSession | undefined {
+  const sessions = ownSessions();
+  return sessions.find((session) => session.status !== 'exited') ?? sessions[0];
+}
+
+/** A file and 1-based line range from a tool's arguments, checked against the file: 0-based lines and their text. */
+function codeRange(
+  args: Record<string, unknown>,
+): { file: string; startLine: number; endLine: number; code: string } | string {
+  if (typeof args.file !== 'string' || !args.file) {
+    return 'file is required.';
+  }
+  const file = path.resolve(args.file);
+  let lines: string[];
+  try {
+    lines = fs.readFileSync(file, 'utf8').split('\n').map((line) => line.replace(/\r$/, ''));
+  } catch {
+    return `Can't read ${file}.`;
+  }
+  const start = typeof args.start_line === 'number' ? Math.floor(args.start_line) : NaN;
+  const end = typeof args.end_line === 'number' ? Math.floor(args.end_line) : start;
+  if (!(start >= 1 && end >= start && end <= lines.length)) {
+    return `Lines ${args.start_line}-${args.end_line ?? args.start_line} aren't in ${file}, which has ${lines.length} lines.`;
+  }
+  return { file, startLine: start - 1, endLine: end - 1, code: lines.slice(start - 1, end).join('\n') };
+}
+
+function hasText(args: Record<string, unknown>): args is { text: string } {
+  return typeof args.text === 'string' && !!args.text.trim();
 }
 
 type Status = 'waiting' | 'replied' | 'resolved' | 'all';
@@ -171,7 +234,7 @@ function formatComment(comment: CodeComment, location: Location): string {
     ...fenced(comment.code),
     status,
     ...(location.kind === 'changed' && location.current !== undefined ? fenced(location.current) : []),
-    `User: ${comment.text}`,
+    `${comment.author === 'claude' ? 'Claude' : 'User'}: ${comment.text}`,
     ...comment.replies.map((reply) => `${reply.author === 'claude' ? 'Claude' : 'User'}: ${reply.text}`),
   ].join('\n');
 }
@@ -253,13 +316,50 @@ function callTool(name: string | undefined, args: Record<string, unknown>): Tool
     if (!comment) {
       return text(`No comment ${String(args.comment_id)} for this session.`, true);
     }
-    if (typeof args.text !== 'string' || !args.text.trim()) {
+    if (!hasText(args)) {
       return text('The reply needs text.', true);
     }
     comment.replies.push({ author: 'claude', text: args.text, at: Date.now() });
     comment.status = 'replied';
     files.save(comment);
     return text('Replied.');
+  }
+  if (name === 'add_comment') {
+    const session = currentSession();
+    const range = codeRange(args);
+    if (!session || typeof range === 'string') {
+      return text(session ? (range as string) : 'No Spool session for this terminal.', true);
+    }
+    if (!hasText(args)) {
+      return text('The comment needs text.', true);
+    }
+    const comment: CodeComment = {
+      id: randomUUID(),
+      ...range,
+      text: args.text,
+      status: 'replied',
+      sessionId: session.id,
+      replies: [],
+      createdAt: Date.now(),
+      author: 'claude',
+      unseen: true,
+    };
+    files.save(comment);
+    return text(`Added comment ${comment.id}.`);
+  }
+  if (name === 'edit_comment') {
+    const comment = own.find((c) => c.id === args.comment_id);
+    if (!comment) {
+      return text(`No comment ${String(args.comment_id)} for this session.`, true);
+    }
+    if (comment.author !== 'claude') {
+      return text("That comment is the user's; you can only edit comments you started. Reply instead.", true);
+    }
+    if (!hasText(args)) {
+      return text('The comment needs text.', true);
+    }
+    files.save({ ...comment, text: args.text, editedAt: Date.now() });
+    return text('Edited.');
   }
   return text(`Unknown tool ${name}.`, true);
 }
