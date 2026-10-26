@@ -160,6 +160,47 @@
         "title": "Remove from List",
         "category": "Spool",
         "icon": "$(close)"
+      },
+      {
+        "command": "spool.previousStep",
+        "title": "Previous Step",
+        "category": "Spool",
+        "icon": "$(chevron-left)"
+      },
+      {
+        "command": "spool.nextStep",
+        "title": "Next Step",
+        "category": "Spool",
+        "icon": "$(chevron-right)"
+      },
+      {
+        "command": "spool.startWalkthrough",
+        "title": "Start Walkthrough",
+        "category": "Spool",
+        "icon": "$(play)"
+      },
+      {
+        "command": "spool.leaveWalkthrough",
+        "title": "Leave Walkthrough",
+        "category": "Spool"
+      },
+      {
+        "command": "spool.resolveWalkthrough",
+        "title": "Resolve Walkthrough",
+        "category": "Spool",
+        "icon": "$(check)"
+      },
+      {
+        "command": "spool.reopenWalkthrough",
+        "title": "Reopen Walkthrough",
+        "category": "Spool",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "spool.deleteWalkthrough",
+        "title": "Delete Walkthrough",
+        "category": "Spool",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -336,6 +377,46 @@
           "command": "spool.removeFromList",
           "when": "view == spool.history && viewItem =~ /^exited/",
           "group": "3_lifecycle@0"
+        },
+        {
+          "command": "spool.startWalkthrough",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^walkthrough:/",
+          "group": "inline@0"
+        },
+        {
+          "command": "spool.resolveWalkthrough",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem == walkthrough:open",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.reopenWalkthrough",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem == walkthrough:resolved",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.deleteWalkthrough",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^walkthrough:/",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.sendQueuedComment",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^step:queued/",
+          "group": "inline@1"
+        },
+        {
+          "command": "spool.resolveComment",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^step:(sent|read|replied):thread$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.reopenComment",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^step:resolved:thread$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "spool.deleteComment",
+          "when": "view =~ /^spool\\.(sessions|history)$/ && viewItem =~ /^step:/",
+          "group": "inline@3"
         }
       ],
       "commandPalette": [
@@ -422,6 +503,34 @@
         {
           "command": "spool.removeFromList",
           "when": "false"
+        },
+        {
+          "command": "spool.startWalkthrough",
+          "when": "false"
+        },
+        {
+          "command": "spool.resolveWalkthrough",
+          "when": "false"
+        },
+        {
+          "command": "spool.reopenWalkthrough",
+          "when": "false"
+        },
+        {
+          "command": "spool.deleteWalkthrough",
+          "when": "false"
+        },
+        {
+          "command": "spool.previousStep",
+          "when": "spool.inWalkthrough"
+        },
+        {
+          "command": "spool.nextStep",
+          "when": "spool.inWalkthrough"
+        },
+        {
+          "command": "spool.leaveWalkthrough",
+          "when": "spool.inWalkthrough"
         }
       ],
       "comments/commentThread/context": [
@@ -453,18 +562,28 @@
       ],
       "comments/commentThread/title": [
         {
+          "command": "spool.previousStep",
+          "group": "inline@0",
+          "when": "commentController == spool && commentThread =~ /:step:(middle|last)$/"
+        },
+        {
+          "command": "spool.nextStep",
+          "group": "inline@0",
+          "when": "commentController == spool && commentThread =~ /:step:(first|middle)$/"
+        },
+        {
           "command": "spool.queueDraft",
           "when": "commentController == spool && commentThread =~ /^(draft|queued)$/",
           "group": "inline@1"
         },
         {
           "command": "spool.resolveComment",
-          "when": "commentController == spool && commentThread =~ /^(sent|read|replied)$/",
+          "when": "commentController == spool && commentThread =~ /^(sent|read|replied)(:|$)/",
           "group": "inline@2"
         },
         {
           "command": "spool.reopenComment",
-          "when": "commentController == spool && commentThread == resolved",
+          "when": "commentController == spool && commentThread =~ /^resolved(:|$)/",
           "group": "inline@2"
         },
         {
@@ -493,6 +612,16 @@
         "command": "spool.nextReply",
         "key": "ctrl+alt+n",
         "mac": "cmd+alt+n"
+      },
+      {
+        "command": "spool.previousStep",
+        "key": "ctrl+alt+[",
+        "when": "spool.inWalkthrough"
+      },
+      {
+        "command": "spool.nextStep",
+        "key": "ctrl+alt+]",
+        "when": "spool.inWalkthrough"
       }
     ]
   },

@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BrokerClient } from './brokerClient';
-import { CodeComment, CommentStore } from './comments';
+import { CodeComment, CommentStore, Walkthrough, awaitsYou } from './comments';
 import { CommentThreads, pickBranchParent, pickDestination, pickSession } from './commentThreads';
 import { nameFromPrompt } from './naming';
 import { FolderGroup } from './groups';
@@ -14,6 +14,7 @@ import { watchNeedsInput } from './notifications';
 import { JsonFiles } from './persistence';
 import { SavedSession, Session, SessionStore } from './sessions';
 import { SessionTreeProvider, isSession } from './sessionTree';
+import { WalkthroughNavigator } from './walkthroughs';
 
 const LIVENESS_CHECK_MS = 5_000;
 
@@ -41,9 +42,17 @@ export async function activate(context: vscode.ExtensionContext) {
   await syncSessions();
 
   const commentFiles = new JsonFiles<CodeComment>(path.join(storageDir, 'comments'));
-  const comments = new CommentStore(commentFiles);
+  const walkthroughFiles = new JsonFiles<Walkthrough>(path.join(storageDir, 'walkthroughs'));
+  const comments = new CommentStore(commentFiles, walkthroughFiles);
   const threads = new CommentThreads(comments, store);
-  context.subscriptions.push(comments, threads, commentFiles.watch(() => comments.sync()));
+  const walkthroughs = new WalkthroughNavigator(comments, threads, (step) => void revealInSidebar(step));
+  context.subscriptions.push(
+    comments,
+    threads,
+    walkthroughs,
+    commentFiles.watch(() => comments.sync()),
+    walkthroughFiles.watch(() => comments.sync()),
+  );
 
   const broker = new BrokerClient(
     brokerSocketPath(),
@@ -221,7 +230,27 @@ export async function activate(context: vscode.ExtensionContext) {
       threads.reply(reply);
     }),
     // From a comment's row in the sidebar.
-    vscode.commands.registerCommand('spool.openComment', (comment: CodeComment) => threads.reveal(comment)),
+    vscode.commands.registerCommand('spool.openComment', (comment: CodeComment) =>
+      comment.walkthroughId ? walkthroughs.show(comment) : threads.reveal(comment),
+    ),
+    // Walkthroughs: Previous / Next from a step's thread, or from the keyboard and status bar.
+    vscode.commands.registerCommand('spool.nextStep', (target?: CommentTarget) =>
+      walkthroughs.move(1, target && commentOf(target)),
+    ),
+    vscode.commands.registerCommand('spool.previousStep', (target?: CommentTarget) =>
+      walkthroughs.move(-1, target && commentOf(target)),
+    ),
+    vscode.commands.registerCommand('spool.startWalkthrough', (walkthrough: Walkthrough) => walkthroughs.start(walkthrough)),
+    vscode.commands.registerCommand('spool.leaveWalkthrough', () => walkthroughs.leave()),
+    vscode.commands.registerCommand('spool.resolveWalkthrough', (walkthrough: Walkthrough) =>
+      comments.setWalkthroughResolved(walkthrough, true),
+    ),
+    vscode.commands.registerCommand('spool.reopenWalkthrough', (walkthrough: Walkthrough) =>
+      comments.setWalkthroughResolved(walkthrough, false),
+    ),
+    vscode.commands.registerCommand('spool.deleteWalkthrough', (walkthrough: Walkthrough) =>
+      comments.deleteWalkthrough(walkthrough),
+    ),
     vscode.commands.registerCommand('spool.sendQueuedComment', async (comment: CodeComment) => {
       const session = store.all.find((s) => s.id === comment.sessionId);
       if (session?.terminal && session.status !== 'exited') {
@@ -232,8 +261,8 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('spool.nextReply', async () => {
       const replied = comments.all
-        .filter((comment) => comment.status === 'replied')
-        .sort((a, b) => (a.replies.at(-1)?.at ?? 0) - (b.replies.at(-1)?.at ?? 0));
+        .filter(awaitsYou)
+        .sort((a, b) => (a.replies.at(-1)?.at ?? a.createdAt) - (b.replies.at(-1)?.at ?? b.createdAt));
       if (!replied.length) {
         vscode.window.showInformationMessage('No replies waiting.');
         return;
@@ -243,10 +272,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const next = replied[(index + 1) % replied.length];
       lastRevealedReply = next.id;
       await threads.reveal(next);
-      const element = treeProvider.elementFor(next);
-      if (element && view.visible) {
-        await view.reveal(element, { select: true, focus: false });
-      }
+      await revealInSidebar(next);
     }),
     vscode.commands.registerCommand('spool.sendComments', (session: Session) =>
       send(session, comments.queuedOn(session.id)),
@@ -353,6 +379,18 @@ export async function activate(context: vscode.ExtensionContext) {
     const comment = await threads.create(reply, session);
     comments.markSent([comment]);
     runClaude(session, ...args, commentsPrompt(1));
+  }
+
+  /** Selects a comment's row, if the Sessions view is showing and lists it. */
+  async function revealInSidebar(comment: CodeComment): Promise<void> {
+    const element = treeProvider.elementFor(comment);
+    if (element && view.visible) {
+      try {
+        await view.reveal(element, { select: true, focus: false });
+      } catch {
+        // Not in this view (e.g. a step of an exited session's walkthrough, shown in History).
+      }
+    }
   }
 
   function selectActiveSession(terminal: vscode.Terminal | undefined): void {

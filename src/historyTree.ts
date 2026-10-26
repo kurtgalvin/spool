@@ -1,11 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CodeComment, CommentStore } from './comments';
+import { CodeComment, CommentStore, Walkthrough } from './comments';
 import { FolderGroup, groupFor } from './groups';
 import { Conversation, RunningProcess, TranscriptIndex } from './history';
 import { Session, SessionStore } from './sessions';
-import { commentTreeItem, inSessionsView, sortComments, tildify } from './sessionTree';
+import {
+  commentTreeItem,
+  inSessionsView,
+  sortComments,
+  stepTreeItem,
+  tildify,
+  walkthroughTreeItem,
+  walkthroughsOf,
+} from './sessionTree';
 
 /** Per folder group, newest first. */
 const LIMIT = 50;
@@ -30,7 +38,7 @@ interface GroupNode {
   group: FolderGroup;
 }
 
-export type HistoryElement = SectionNode | GroupNode | Session | CodeComment | Conversation;
+export type HistoryElement = SectionNode | GroupNode | Session | CodeComment | Walkthrough | Conversation;
 
 function isSession(element: HistoryElement): element is Session {
   return 'terminalId' in element;
@@ -42,6 +50,10 @@ function isComment(element: HistoryElement): element is CodeComment {
 
 function isConversation(element: HistoryElement): element is Conversation {
   return 'titleSource' in element;
+}
+
+function isWalkthrough(element: HistoryElement): element is Walkthrough {
+  return 'steps' in element;
 }
 
 /**
@@ -142,7 +154,14 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryEleme
       return [];
     }
     if (isSession(element)) {
-      return [...sortComments(this.commentsOf(element)), ...this.threadsOf(element)];
+      return [
+        ...sortComments(this.commentsOf(element).filter((comment) => !comment.walkthroughId)),
+        ...walkthroughsOf(element, this.comments),
+        ...this.threadsOf(element),
+      ];
+    }
+    if (isWalkthrough(element)) {
+      return this.comments.stepsOf(element);
     }
     if (element.kind === 'group') {
       return this.itemsIn(element.section, element.group);
@@ -162,7 +181,10 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryEleme
       return this.conversationItem(element);
     }
     if (isComment(element)) {
-      return commentTreeItem(element);
+      return element.walkthroughId ? stepTreeItem(element, this.comments) : commentTreeItem(element);
+    }
+    if (isWalkthrough(element)) {
+      return walkthroughTreeItem(element, this.comments);
     }
     if (isSession(element)) {
       return this.sessionItem(element);
@@ -270,6 +292,8 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryEleme
         : vscode.TreeItemCollapsibleState.None,
     );
     item.id = `exited:${session.id}`;
+    const standalone = comments.filter((comment) => !comment.walkthroughId).length;
+    const walkthroughs = walkthroughsOf(session, this.comments).length;
     const lastActive = this.lastActive(session);
     const group = this.groupOfSession(session);
     const subdir = group && session.launchDir ? path.relative(group.dir, session.launchDir) : '';
@@ -278,7 +302,8 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryEleme
       lastActive !== undefined && timeAgo(lastActive),
       subdir,
       parent && !this.nestedUnder(session) && `from ${parent.name}`,
-      comments.length && (comments.length === 1 ? '1 comment' : `${comments.length} comments`),
+      standalone && (standalone === 1 ? '1 comment' : `${standalone} comments`),
+      walkthroughs && (walkthroughs === 1 ? '1 walkthrough' : `${walkthroughs} walkthroughs`),
     ]
       .filter(Boolean)
       .join(' · ');
@@ -387,7 +412,8 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryEleme
         session.name,
         session.parentId,
         session.claudeSessionId,
-        this.commentsOf(session).map((comment) => [comment.id, comment.status, comment.replies.length]),
+        this.commentsOf(session).map((comment) => [comment.id, comment.status, comment.replies.length, comment.unseen]),
+        walkthroughsOf(session, this.comments).map((walkthrough) => [walkthrough.title, walkthrough.steps]),
       ]),
     );
   }

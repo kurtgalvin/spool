@@ -94,8 +94,9 @@ and changes this session's comments and walkthroughs.
      number, file:line and first line of text, or their status once you've replied there.
      Exited sessions in History show their walkthroughs the same way.
    - **Previous / Next Step** also work from the keyboard (Ctrl+Alt+[ and Ctrl+Alt+]) and
-     from a status bar item, "Step 3/5 ‹ ›", shown while you're in a walkthrough. They use
-     the step you opened last; the sidebar selects it as you move.
+     from the status bar, "‹ Step 3/5 ›", shown while you're in a walkthrough (click the
+     count to leave it). They use the step you opened last; the sidebar selects it as you
+     move.
    - **Replying:** a reply on a step goes to the session like any reply. `read_comments`
      shows which walkthrough a step is in and an outline of all its steps, so Claude can
      answer, change the walkthrough, or both.
@@ -108,6 +109,12 @@ and changes this session's comments and walkthroughs.
      the session's replied count, and Next Reply visits them, on the same rule.
    - The instructions say: use a walkthrough when asked how something works across files,
      or to explain a change; use `add_comment` for a single point.
+
+   Checked on Claude Code 2.1.310 with `claude -p` against fake storage: asked for a
+   walkthrough, Claude built three correct steps with relative paths (resolved from its
+   working directory) and flagged one thing with `add_comment`. After a reply on step 2
+   asking for a step about `module.exports`, it inserted a new step 3 with `add_steps` and
+   said so in the thread.
 
 ## Out of scope
 

@@ -11,7 +11,7 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import type { CodeComment } from './comments';
+import type { CodeComment, Walkthrough } from './comments';
 import { JsonFiles } from './persistence';
 import type { SavedSession } from './sessions';
 
@@ -26,7 +26,21 @@ call read_comments with no arguments, then handle each one: a change request (ma
 (answer it). Reply to every comment with reply_to_comment: a short summary of what you did, or the answer. The \
 user resolves threads after reading your replies. read_comments' filters are for background, e.g. what the user \
 said about a file before you change it; don't answer resolved threads. Use add_comment to leave the user a note on \
-code when they ask for one (a review, "point out…") or something needs their attention; never on every edit.`;
+code when they ask for one (a review, "point out…") or something needs their attention; never on every edit. Use \
+add_walkthrough when asked how something works across files, or to explain a change: ordered steps the user moves \
+through with Previous / Next. When the user replies on a step you can answer, change the walkthrough (add_steps, \
+edit_comment, remove_steps, update_walkthrough), or both; say what you changed in your reply.`;
+
+const STEP_SCHEMA = {
+  type: 'object',
+  properties: {
+    file: { type: 'string', description: 'Absolute, or relative to your working directory' },
+    start_line: { type: 'number', description: 'First line (1-based)' },
+    end_line: { type: 'number', description: 'Last line (1-based, inclusive); defaults to start_line' },
+    text: { type: 'string', description: 'What this step explains, in markdown' },
+  },
+  required: ['file', 'start_line', 'text'],
+};
 
 const TOOLS = [
   {
@@ -87,6 +101,57 @@ const TOOLS = [
       required: ['comment_id', 'text'],
     },
   },
+  {
+    name: 'add_walkthrough',
+    description:
+      'Create a walkthrough in the user\'s editor: ordered steps on code across files that explain something, which they step through with Previous / Next and can reply on. Each step is a comment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What it explains, e.g. "How hooks reach the sidebar"' },
+        steps: { type: 'array', items: STEP_SCHEMA, description: 'In order' },
+      },
+      required: ['title', 'steps'],
+    },
+  },
+  {
+    name: 'add_steps',
+    description: 'Insert steps into one of your walkthroughs, after a given step or at the end.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        walkthrough_id: { type: 'string' },
+        after_step: { type: 'string', description: 'Step (comment) id to insert after; omit to add at the end' },
+        steps: { type: 'array', items: STEP_SCHEMA, description: 'In order' },
+      },
+      required: ['walkthrough_id', 'steps'],
+    },
+  },
+  {
+    name: 'remove_steps',
+    description: "Remove steps from one of your walkthroughs. Steps the user replied on can't be removed.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        walkthrough_id: { type: 'string' },
+        step_ids: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['walkthrough_id', 'step_ids'],
+    },
+  },
+  {
+    name: 'update_walkthrough',
+    description: 'Rename one of your walkthroughs, or reorder its steps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        walkthrough_id: { type: 'string' },
+        title: { type: 'string' },
+        order: { type: 'array', items: { type: 'string' }, description: 'Every step id, in the new order' },
+      },
+      required: ['walkthrough_id'],
+    },
+  },
 ];
 
 interface Request {
@@ -138,6 +203,100 @@ function codeRange(
     return `Lines ${args.start_line}-${args.end_line ?? args.start_line} aren't in ${file}, which has ${lines.length} lines.`;
   }
   return { file, startLine: start - 1, endLine: end - 1, code: lines.slice(start - 1, end).join('\n') };
+}
+
+/** Step comments for `walkthrough` from a tool's `steps` argument, or what's wrong with it. Not saved yet. */
+function newSteps(value: unknown, walkthrough: Walkthrough): CodeComment[] | string {
+  if (!Array.isArray(value) || !value.length) {
+    return 'steps must be a non-empty list.';
+  }
+  const steps: CodeComment[] = [];
+  for (const [i, step] of value.entries()) {
+    const range = typeof step === 'object' && step ? codeRange(step) : 'not an object.';
+    if (typeof range === 'string') {
+      return `Step ${i + 1}: ${range}`;
+    }
+    if (!hasText(step)) {
+      return `Step ${i + 1} needs text.`;
+    }
+    steps.push({
+      id: randomUUID(),
+      ...range,
+      text: step.text,
+      status: 'replied',
+      sessionId: walkthrough.sessionId,
+      replies: [],
+      createdAt: Date.now(),
+      author: 'claude',
+      unseen: true,
+      walkthroughId: walkthrough.id,
+    });
+  }
+  return steps;
+}
+
+function editWalkthrough(
+  name: 'add_steps' | 'remove_steps' | 'update_walkthrough',
+  walkthrough: Walkthrough,
+  args: Record<string, unknown>,
+  files: JsonFiles<CodeComment>,
+  walkthroughFiles: JsonFiles<Walkthrough>,
+  own: CodeComment[],
+): ToolResult {
+  if (name === 'add_steps') {
+    const after = args.after_step === undefined ? walkthrough.steps.length - 1 : walkthrough.steps.indexOf(String(args.after_step));
+    if (after < 0 && args.after_step !== undefined) {
+      return text(`${String(args.after_step)} isn't a step of this walkthrough.`, true);
+    }
+    const steps = newSteps(args.steps, walkthrough);
+    if (typeof steps === 'string') {
+      return text(steps, true);
+    }
+    for (const step of steps) {
+      files.save(step);
+    }
+    walkthrough.steps.splice(after + 1, 0, ...steps.map((step) => step.id));
+    walkthroughFiles.save(walkthrough);
+    return text(`Added ${steps.map((step) => `${step.id} (step ${walkthrough.steps.indexOf(step.id) + 1})`).join(', ')}.`);
+  }
+  if (name === 'remove_steps') {
+    const ids = Array.isArray(args.step_ids) ? args.step_ids.map(String) : [];
+    const unknown = ids.filter((id) => !walkthrough.steps.includes(id));
+    if (!ids.length || unknown.length) {
+      return text(ids.length ? `Not steps of this walkthrough: ${unknown.join(', ')}.` : 'step_ids is required.', true);
+    }
+    // Removing a step deletes its thread, and with it anything the user wrote there.
+    const repliedOn = ids.filter((id) => own.find((c) => c.id === id)?.replies.some((reply) => reply.author === 'you'));
+    if (repliedOn.length) {
+      return text(`The user replied on ${repliedOn.join(', ')}; those can't be removed. Edit or add steps instead.`, true);
+    }
+    for (const id of ids) {
+      files.delete(id);
+    }
+    walkthrough.steps = walkthrough.steps.filter((id) => !ids.includes(id));
+    if (walkthrough.steps.length) {
+      walkthroughFiles.save(walkthrough);
+      return text(`Removed ${ids.length === 1 ? '1 step' : `${ids.length} steps`}; ${walkthrough.steps.length} left.`);
+    }
+    walkthroughFiles.delete(walkthrough.id);
+    return text('Removed every step, so the walkthrough is gone.');
+  }
+  if (args.title !== undefined) {
+    if (typeof args.title !== 'string' || !args.title.trim()) {
+      return text('The title needs text.', true);
+    }
+    walkthrough.title = args.title.trim();
+  }
+  if (args.order !== undefined) {
+    const order = Array.isArray(args.order) ? args.order.map(String) : [];
+    const same = order.length === walkthrough.steps.length && [...order].sort().join() === [...walkthrough.steps].sort().join();
+    if (!same) {
+      return text('order must list every step id exactly once.', true);
+    }
+    walkthrough.steps = order;
+  }
+  walkthroughFiles.save(walkthrough);
+  return text('Updated.');
 }
 
 function hasText(args: Record<string, unknown>): args is { text: string } {
@@ -217,7 +376,24 @@ function fenced(code: string): string[] {
   return [fence, code, fence];
 }
 
-function formatComment(comment: CodeComment, location: Location): string {
+/** For a step: where it is in its walkthrough, and an outline of every step. */
+function walkthroughContext(comment: CodeComment, walkthroughs: Map<string, Walkthrough>, all: CodeComment[]): string[] {
+  const walkthrough = comment.walkthroughId ? walkthroughs.get(comment.walkthroughId) : undefined;
+  if (!walkthrough) {
+    return [];
+  }
+  const steps = walkthrough.steps.map((id) => all.find((c) => c.id === id)).filter((c): c is CodeComment => !!c);
+  const outline = steps.map(
+    (step, i) =>
+      `${i + 1}. ${step.id} ${path.relative(process.cwd(), step.file)}:${step.startLine + 1}${step.id === comment.id ? ' (this step)' : ''}`,
+  );
+  return [
+    `Step ${steps.indexOf(comment) + 1} of ${steps.length} in walkthrough ${walkthrough.id} "${walkthrough.title}". Steps:`,
+    ...outline,
+  ];
+}
+
+function formatComment(comment: CodeComment, location: Location, context: string[] = []): string {
   const status =
     location.kind === 'unchanged'
       ? 'Code: unchanged since the comment.'
@@ -230,6 +406,7 @@ function formatComment(comment: CodeComment, location: Location): string {
             : 'Code: changed since the comment. Those lines now read:';
   return [
     `## Comment ${comment.id} (${STATUS_NOTE[comment.status]})`,
+    ...context,
     `${comment.file} (${lineRange(comment.startLine, comment.endLine)}, as it was when commented):`,
     ...fenced(comment.code),
     status,
@@ -254,7 +431,12 @@ function lastActivity(comment: CodeComment): number {
   return comment.replies.at(-1)?.at ?? comment.createdAt;
 }
 
-function readComments(files: JsonFiles<CodeComment>, own: CodeComment[], args: Record<string, unknown>): ToolResult {
+function readComments(
+  files: JsonFiles<CodeComment>,
+  own: CodeComment[],
+  walkthroughs: Map<string, Walkthrough>,
+  args: Record<string, unknown>,
+): ToolResult {
   const status = (args.status ?? 'waiting') as Status;
   if (!['waiting', 'replied', 'resolved', 'all'].includes(status)) {
     return text(`Unknown status ${String(args.status)}.`, true);
@@ -299,7 +481,10 @@ function readComments(files: JsonFiles<CodeComment>, own: CodeComment[], args: R
   const header = isDefault
     ? `${count}. Reply to each with reply_to_comment, passing its id.`
     : `${count}${more ? ` (the newest; ${more} more match)` : ''}.`;
-  return text(`${header}\n\n${matches.map(({ comment, location }) => formatComment(comment, location)).join('\n\n')}`);
+  const formatted = matches.map(({ comment, location }) =>
+    formatComment(comment, location, walkthroughContext(comment, walkthroughs, own)),
+  );
+  return text(`${header}\n\n${formatted.join('\n\n')}`);
 }
 
 function callTool(name: string | undefined, args: Record<string, unknown>): ToolResult {
@@ -307,9 +492,50 @@ function callTool(name: string | undefined, args: Record<string, unknown>): Tool
     return text('Spool comments are only available in sessions started from Spool.', true);
   }
   const files = new JsonFiles<CodeComment>(path.join(storage, 'comments'));
+  const walkthroughFiles = new JsonFiles<Walkthrough>(path.join(storage, 'walkthroughs'));
   const own = ownComments(files);
+  const sessionIds = new Set(ownSessions().map((session) => session.id));
+  const walkthroughs = new Map(
+    walkthroughFiles
+      .loadAll()
+      .filter((walkthrough) => sessionIds.has(walkthrough.sessionId))
+      .map((walkthrough) => [walkthrough.id, walkthrough]),
+  );
   if (name === 'read_comments') {
-    return readComments(files, own, args);
+    return readComments(files, own, walkthroughs, args);
+  }
+  if (name === 'add_walkthrough') {
+    const session = currentSession();
+    if (!session) {
+      return text('No Spool session for this terminal.', true);
+    }
+    if (typeof args.title !== 'string' || !args.title.trim()) {
+      return text('The walkthrough needs a title.', true);
+    }
+    const walkthrough: Walkthrough = {
+      id: randomUUID(),
+      sessionId: session.id,
+      title: args.title.trim(),
+      steps: [],
+      createdAt: Date.now(),
+    };
+    const steps = newSteps(args.steps, walkthrough);
+    if (typeof steps === 'string') {
+      return text(steps, true);
+    }
+    for (const step of steps) {
+      files.save(step);
+    }
+    walkthrough.steps = steps.map((step) => step.id);
+    walkthroughFiles.save(walkthrough);
+    return text(`Added walkthrough ${walkthrough.id} with steps:\n${steps.map((step, i) => `${i + 1}. ${step.id}`).join('\n')}`);
+  }
+  if (name === 'add_steps' || name === 'remove_steps' || name === 'update_walkthrough') {
+    const walkthrough = walkthroughs.get(String(args.walkthrough_id));
+    if (!walkthrough) {
+      return text(`No walkthrough ${String(args.walkthrough_id)} for this session.`, true);
+    }
+    return editWalkthrough(name, walkthrough, args, files, walkthroughFiles, own);
   }
   if (name === 'reply_to_comment') {
     const comment = own.find((c) => c.id === args.comment_id);

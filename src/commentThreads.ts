@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CodeComment, CommentStatus, CommentStore } from './comments';
+import { CodeComment, CommentStatus, CommentStore, awaitsYou } from './comments';
 import { groupFor } from './groups';
 import { Session, SessionStore } from './sessions';
 
@@ -19,7 +19,8 @@ const STATUS_LABEL: Record<CommentStatus, string> = {
 /**
  * Shows comments as comment threads in the editor, and lets you comment on any file on disk
  * (including the current side of a diff). A thread's `contextValue` is its comment's status,
- * matched by `commentThread` in package.json menu `when` clauses.
+ * plus `:step:first|middle|last|only` for walkthrough steps, matched by `commentThread` in
+ * package.json menu `when` clauses.
  */
 export class CommentThreads implements vscode.Disposable {
   private readonly controller = vscode.comments.createCommentController(COMMENT_CONTROLLER_ID, 'Spool');
@@ -98,6 +99,13 @@ export class CommentThreads implements vscode.Disposable {
     this.comments.markSeen(comment);
   }
 
+  collapse(comment: CodeComment): void {
+    const thread = this.threads.get(comment.id);
+    if (thread) {
+      thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+    }
+  }
+
   commentFor(thread: vscode.CommentThread): CodeComment | undefined {
     const id = this.commentIds.get(thread);
     return this.comments.all.find((comment) => comment.id === id);
@@ -153,13 +161,14 @@ export class CommentThreads implements vscode.Disposable {
         this.attach(comment.id, thread);
       }
       const label = this.labelFor(comment);
-      const key = JSON.stringify([comment, label]);
+      const contextValue = this.contextValueFor(comment);
+      const key = JSON.stringify([comment, label, contextValue]);
       if (this.rendered.get(comment.id) === key) {
         continue;
       }
       this.rendered.set(comment.id, key);
       thread.label = label;
-      thread.contextValue = comment.status;
+      thread.contextValue = contextValue;
       // Replies go to the comment's session, so there must be one; a new comment that's only
       // queued hasn't been read yet, so there's nothing to reply to.
       thread.canReply = !!comment.sessionId && (comment.status !== 'queued' || comment.replies.length > 0);
@@ -189,7 +198,32 @@ export class CommentThreads implements vscode.Disposable {
     }
   }
 
+  private contextValueFor(comment: CodeComment): string {
+    const step = this.stepPosition(comment);
+    if (!step) {
+      return comment.status;
+    }
+    const position =
+      step.count === 1 ? 'only' : step.index === 0 ? 'first' : step.index === step.count - 1 ? 'last' : 'middle';
+    return `${comment.status}:step:${position}`;
+  }
+
+  private stepPosition(comment: CodeComment): { index: number; count: number; title: string } | undefined {
+    const walkthrough = this.comments.walkthroughOf(comment);
+    if (!walkthrough) {
+      return undefined;
+    }
+    const steps = this.comments.stepsOf(walkthrough);
+    return { index: steps.indexOf(comment), count: steps.length, title: walkthrough.title };
+  }
+
   private labelFor(comment: CodeComment): string {
+    const step = this.stepPosition(comment);
+    if (step) {
+      // Once you've replied in a step's thread, it's a conversation like any other.
+      const status = comment.replies.length ? ` · ${STATUS_LABEL[comment.status]}` : '';
+      return `Step ${step.index + 1}/${step.count} · ${step.title}${status}`;
+    }
     const session = comment.sessionId ? this.sessions.all.find((s) => s.id === comment.sessionId) : undefined;
     // Claude's own comment, not replied to yet, is waiting on you without having replied to anything.
     const status =
@@ -202,18 +236,14 @@ export class CommentThreads implements vscode.Disposable {
 
 /**
  * VS Code's Comments badge counts unresolved threads, so only a thread Claude has replied to,
- * waiting for you to read it, is unresolved. Threads waiting on you to send or on Claude to
+ * waiting for you to read it, is unresolved (see awaitsYou). Threads waiting on you to send or on Claude to
  * answer have no state.
  */
 function stateFor(comment: CodeComment): vscode.CommentThreadState | undefined {
-  switch (comment.status) {
-    case 'replied':
-      return vscode.CommentThreadState.Unresolved;
-    case 'resolved':
-      return vscode.CommentThreadState.Resolved;
-    default:
-      return undefined;
+  if (awaitsYou(comment)) {
+    return vscode.CommentThreadState.Unresolved;
   }
+  return comment.status === 'resolved' ? vscode.CommentThreadState.Resolved : undefined;
 }
 
 type SessionItem = vscode.QuickPickItem & { session: Session };

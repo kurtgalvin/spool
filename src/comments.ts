@@ -39,31 +39,89 @@ export interface CodeComment {
   unseen?: boolean;
   /** When Claude last rewrote its text. */
   editedAt?: number;
+  /** For a walkthrough step: the walkthrough it's in. */
+  walkthroughId?: string;
+}
+
+/** Claude's ordered steps across files explaining something. Each step is a comment. */
+export interface Walkthrough {
+  id: string;
+  sessionId: string;
+  title: string;
+  /** Comment ids, in order. The only place the order is kept. */
+  steps: string[];
+  createdAt: number;
+}
+
+/**
+ * Waiting on you to read Claude's reply or comment. A walkthrough step isn't until you've
+ * replied in its thread and Claude answered: a new walkthrough would otherwise flag every step.
+ */
+export function awaitsYou(comment: CodeComment): boolean {
+  return comment.status === 'replied' && !(comment.walkthroughId && !comment.replies.length);
 }
 
 export type NewComment = Pick<CodeComment, 'file' | 'startLine' | 'endLine' | 'code' | 'text'>;
 
-export interface CommentPersistence {
-  loadAll(): CodeComment[];
-  save(comment: CodeComment): void;
+export interface Persistence<T> {
+  loadAll(): T[];
+  save(item: T): void;
   delete(id: string): void;
 }
 
+export type CommentPersistence = Persistence<CodeComment>;
+
 /**
- * Every comment, from every window: comments are saved as files, and any window (or, later,
- * a session's MCP server) may change one, so the store mirrors the files rather than owning them.
+ * Every comment and walkthrough, from every window: they're saved as files, and any window or
+ * session's MCP server may change one, so the store mirrors the files rather than owning them.
  */
 export class CommentStore implements vscode.Disposable {
   private readonly comments = new Map<string, CodeComment>();
+  private readonly walkthroughMap = new Map<string, Walkthrough>();
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
 
-  constructor(private readonly persistence: CommentPersistence) {
+  constructor(
+    private readonly persistence: CommentPersistence,
+    private readonly walkthroughFiles: Persistence<Walkthrough> = { loadAll: () => [], save() {}, delete() {} },
+  ) {
     this.sync();
   }
 
   get all(): CodeComment[] {
     return [...this.comments.values()];
+  }
+
+  get walkthroughs(): Walkthrough[] {
+    return [...this.walkthroughMap.values()];
+  }
+
+  walkthroughOf(comment: CodeComment): Walkthrough | undefined {
+    return comment.walkthroughId ? this.walkthroughMap.get(comment.walkthroughId) : undefined;
+  }
+
+  /** A walkthrough's steps in order, skipping any whose comment is gone. */
+  stepsOf(walkthrough: Walkthrough): CodeComment[] {
+    return walkthrough.steps.map((id) => this.comments.get(id)).filter((c): c is CodeComment => !!c);
+  }
+
+  /** Resolves or reopens every step. */
+  setWalkthroughResolved(walkthrough: Walkthrough, resolved: boolean): void {
+    for (const step of this.stepsOf(walkthrough)) {
+      step.status = resolved ? 'resolved' : 'replied';
+      this.persistence.save(step);
+    }
+    this.changed.fire();
+  }
+
+  deleteWalkthrough(walkthrough: Walkthrough): void {
+    for (const step of this.stepsOf(walkthrough)) {
+      this.comments.delete(step.id);
+      this.persistence.delete(step.id);
+    }
+    this.walkthroughMap.delete(walkthrough.id);
+    this.walkthroughFiles.delete(walkthrough.id);
+    this.changed.fire();
   }
 
   queuedOn(sessionId: string): CodeComment[] {
@@ -123,37 +181,28 @@ export class CommentStore implements vscode.Disposable {
     this.changed.fire();
   }
 
+  /** Deleting a walkthrough's last step deletes the walkthrough. */
   delete(comment: CodeComment): void {
     this.comments.delete(comment.id);
     this.persistence.delete(comment.id);
+    const walkthrough = this.walkthroughOf(comment);
+    if (walkthrough) {
+      walkthrough.steps = walkthrough.steps.filter((id) => id !== comment.id);
+      if (walkthrough.steps.length) {
+        this.walkthroughFiles.save(walkthrough);
+      } else {
+        this.walkthroughMap.delete(walkthrough.id);
+        this.walkthroughFiles.delete(walkthrough.id);
+      }
+    }
     this.changed.fire();
   }
 
-  /** Brings the store in line with the comment files, which other windows also write. */
+  /** Brings the store in line with the comment and walkthrough files, which other windows also write. */
   sync(): void {
-    const files = this.persistence.loadAll();
-    const dropped = new Set(this.comments.keys());
-    let changed = false;
-    for (const file of files) {
-      dropped.delete(file.id);
-      const existing = this.comments.get(file.id);
-      if (!existing) {
-        this.comments.set(file.id, file);
-        changed = true;
-      } else if (JSON.stringify(existing) !== JSON.stringify(file)) {
-        // Replace in place: views track comments by object.
-        for (const key of Object.keys(existing)) {
-          delete (existing as unknown as Record<string, unknown>)[key];
-        }
-        Object.assign(existing, file);
-        changed = true;
-      }
-    }
-    for (const id of dropped) {
-      this.comments.delete(id);
-      changed = true;
-    }
-    if (changed) {
+    const comments = mirror(this.comments, this.persistence.loadAll());
+    const walkthroughs = mirror(this.walkthroughMap, this.walkthroughFiles.loadAll());
+    if (comments || walkthroughs) {
       this.changed.fire();
     }
   }
@@ -166,4 +215,30 @@ export class CommentStore implements vscode.Disposable {
     this.persistence.save(comment);
     this.changed.fire();
   }
+}
+
+/** Updates `items` to match `files`; returns whether anything changed. */
+function mirror<T extends { id: string }>(items: Map<string, T>, files: T[]): boolean {
+  const dropped = new Set(items.keys());
+  let changed = false;
+  for (const file of files) {
+    dropped.delete(file.id);
+    const existing = items.get(file.id);
+    if (!existing) {
+      items.set(file.id, file);
+      changed = true;
+    } else if (JSON.stringify(existing) !== JSON.stringify(file)) {
+      // Replace in place: views track items by object.
+      for (const key of Object.keys(existing)) {
+        delete (existing as unknown as Record<string, unknown>)[key];
+      }
+      Object.assign(existing, file);
+      changed = true;
+    }
+  }
+  for (const id of dropped) {
+    items.delete(id);
+    changed = true;
+  }
+  return changed;
 }
