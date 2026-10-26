@@ -175,6 +175,9 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 - **Session history** ([milestone 5](milestone-5.md)): a History view of the folder's
   Claude conversations that Spool isn't showing, from `~/.claude/projects/` transcripts,
   to resume or branch into Spool.
+- **Claude's comments and walkthroughs** ([milestone 6](milestone-6.md)): filters and a
+  changed-since check when Claude reads comments; Claude leaving comments, and walkthroughs
+  (ordered steps across files) you step through and reply on.
 - **Resume group** after reload: relaunch every session in a group with `--resume`.
 
 ### Later
