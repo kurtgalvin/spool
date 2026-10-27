@@ -183,6 +183,12 @@ Near-term fixes and smaller features are tracked in [backlog.md](backlog.md).
 - **No Node needed, releases on GitHub** ([milestone 7](milestone-7.md)): the hook in Rust,
   the MCP server on the editor's runtime, and a `.vsix` with every platform's hook attached to
   each GitHub Release.
+- **Session names from Claude** ([milestone 8](milestone-8.md)): new sessions take Claude
+  Code's generated title after the first prompt; **Let Claude Name It** asks a running
+  session to rename itself through a `rename_session` MCP tool.
+- **Detach side threads, send queued comments** ([milestone 9](milestone-9.md)): move a side
+  thread to the top level of its group and back; a visible **Send Queued Comments** row under
+  a session and a Send on queued threads in the editor.
 - **Resume group** after reload: relaunch every session in a group with `--resume`.
 
 ### Later
