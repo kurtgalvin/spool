@@ -7,8 +7,12 @@ import * as readline from 'readline';
 const TAIL_BYTES = 256 * 1024;
 /** How far into a file to look for its first prompt. */
 const MAX_HEAD_LINES = 2000;
-/** Claude Code writes a conversation's title right after its first prompt, near the top. */
-const TITLE_HEAD_BYTES = 64 * 1024;
+/**
+ * Claude Code writes a conversation's title right after its first prompt, but newer versions
+ * write a few hundred KB of setup records (tool and skill listings, request shapes) first.
+ */
+const TITLE_MAX_BYTES = 4 * 1024 * 1024;
+const TITLE_CHUNK_BYTES = 256 * 1024;
 
 /** A Claude conversation found in Claude Code's transcripts. */
 export interface Conversation {
@@ -166,31 +170,44 @@ export class TranscriptIndex {
 type Line = Record<string, unknown>;
 
 /**
- * The title Claude Code generated for a conversation (`ai-title`), from the start of its
- * transcript; undefined if it isn't there yet or the file can't be read.
+ * The title Claude Code generated for a conversation (`ai-title`), read from the start of its
+ * transcript until the first one; undefined if it isn't there yet or the file can't be read.
+ * The title never changes, so the first one is the title.
  */
 export async function readAiTitle(file: string): Promise<string | undefined> {
-  let text: string;
   try {
     const handle = await fs.promises.open(file, 'r');
     try {
-      const buffer = Buffer.alloc(TITLE_HEAD_BYTES);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      text = buffer.toString('utf8', 0, bytesRead);
+      const buffer = Buffer.alloc(TITLE_CHUNK_BYTES);
+      let pending = '';
+      for (let position = 0; position < TITLE_MAX_BYTES; ) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+        if (!bytesRead) {
+          return undefined;
+        }
+        position += bytesRead;
+        // Only whole lines are parsed; the rest waits for the next chunk. Splitting at a
+        // newline byte is safe in UTF-8.
+        const lines = (pending + buffer.toString('latin1', 0, bytesRead)).split('\n');
+        pending = lines.pop() ?? '';
+        for (const raw of lines) {
+          if (!raw.includes('"ai-title"')) {
+            continue;
+          }
+          const line = parse(Buffer.from(raw, 'latin1').toString('utf8'));
+          const title = line?.type === 'ai-title' ? stringOf(line.aiTitle)?.trim() : undefined;
+          if (title) {
+            return title;
+          }
+        }
+      }
+      return undefined;
     } finally {
       await handle.close();
     }
   } catch {
     return undefined;
   }
-  let title: string | undefined;
-  // A partial last line just fails to parse.
-  for (const line of text.split('\n').map(parse)) {
-    if (line?.type === 'ai-title') {
-      title = stringOf(line.aiTitle) ?? title;
-    }
-  }
-  return title?.trim() || undefined;
 }
 
 /**

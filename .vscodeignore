@@ -9,3 +9,4 @@ eslint.config.mjs
 hook/**
 scripts/**
 .github/**
+artifacts/**

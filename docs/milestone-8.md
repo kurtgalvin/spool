@@ -25,8 +25,9 @@ Code 2.1.310:
      session, and again a few seconds after the prompt (a reply with no tools fires only
      `Stop`). The extension does this (the hook only forwards events), reading the transcript at
      the hook payload's `transcript_path`, or `~/.claude/projects/<project dir>/<session
-     id>.jsonl` (`projectDirName` from `history.ts`) if it's missing. The title is near the
-     top, so only the first 64 KB are read.
+     id>.jsonl` (`projectDirName` from `history.ts`) if it's missing. It reads from the
+     top until the first title: newer Claude Code versions write a few hundred KB of setup
+     records (tool and skill listings) before it.
    - When found, it becomes the name (`nameSource: 'auto'`), the terminal tab follows, and
      Spool stops looking. Nothing automatic changes it after that.
    - **Fallback:** if the session reaches `Stop` with no title, it's named from the first
