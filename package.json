@@ -2,7 +2,7 @@
   "name": "spool",
   "displayName": "Spool",
   "description": "Manage multiple Claude Code terminal sessions",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "kurtgalvin",
   "license": "Apache-2.0",
   "repository": {
