@@ -145,7 +145,11 @@ export async function activate(context: vscode.ExtensionContext) {
       session.terminal?.show();
     }),
     vscode.commands.registerCommand('spool.renameSession', async (session: Session) => {
-      const name = (await vscode.window.showInputBox({ prompt: 'Session name', value: session.name }))?.trim();
+      const name = await askForName(session);
+      if (name === LET_CLAUDE_NAME_IT) {
+        await letClaudeName(session);
+        return;
+      }
       if (!name) {
         return;
       }
@@ -154,6 +158,20 @@ export async function activate(context: vscode.ExtensionContext) {
         // The rename command only targets the active terminal, so focus it first.
         session.terminal.show(true);
         await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name });
+      }
+    }),
+    vscode.commands.registerCommand('spool.nameSession', (session: Session) => letClaudeName(session)),
+    vscode.commands.registerCommand('spool.pickSessionToName', async () => {
+      const items = store.all
+        .filter(isRunningHere)
+        .map((session) => ({ label: session.name, description: session.status, session }));
+      if (!items.length) {
+        vscode.window.showInformationMessage('No running Claude sessions in this window.');
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Let Claude name…' });
+      if (picked) {
+        await letClaudeName(picked.session);
       }
     }),
     vscode.commands.registerCommand('spool.killSession', (session: Session) => {
@@ -459,6 +477,60 @@ async function typeIntoClaude(terminal: vscode.Terminal, line: string): Promise<
   terminal.sendText(line, false);
   await new Promise((resolve) => setTimeout(resolve, 150));
   terminal.sendText('\r', false);
+}
+
+/** Typed into a session by Let Claude Name It; Claude answers with the rename_session tool. */
+const NAME_PROMPT =
+  "Spool: name this session. Call the spool rename_session tool with a short name, 2-4 words, for what we're " +
+  'working on, then carry on.';
+
+/** Returned by askForName when the ✨ button was clicked instead of typing a name. */
+const LET_CLAUDE_NAME_IT = Symbol('let Claude name it');
+
+/** Running in one of this window's terminals, so it can be typed into. */
+function isRunningHere(session: Session): session is Session & { terminal: vscode.Terminal } {
+  return !!session.terminal && session.status !== 'exited';
+}
+
+/**
+ * Asks Claude to rename the session: Spool types the request; the rename arrives through the
+ * MCP server (see SessionStore's RENAME_EVENT). Waits behind the current task if it's busy.
+ */
+async function letClaudeName(session: Session): Promise<void> {
+  if (isRunningHere(session)) {
+    await typeIntoClaude(session.terminal, NAME_PROMPT);
+  }
+}
+
+/**
+ * The Rename… box: a name typed in, LET_CLAUDE_NAME_IT if its ✨ button was clicked (offered
+ * on running sessions), or undefined if cancelled.
+ */
+function askForName(session: Session): Promise<string | typeof LET_CLAUDE_NAME_IT | undefined> {
+  const box = vscode.window.createInputBox();
+  box.title = 'Rename Session';
+  box.prompt = 'Session name';
+  box.value = session.name;
+  const button: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('sparkle'), tooltip: 'Let Claude Name It' };
+  if (isRunningHere(session)) {
+    box.buttons = [button];
+  }
+  return new Promise((resolve) => {
+    let result: string | typeof LET_CLAUDE_NAME_IT | undefined;
+    box.onDidTriggerButton(() => {
+      result = LET_CLAUDE_NAME_IT;
+      box.hide();
+    });
+    box.onDidAccept(() => {
+      result = box.value.trim() || undefined;
+      box.hide();
+    });
+    box.onDidHide(() => {
+      box.dispose();
+      resolve(result);
+    });
+    box.show();
+  });
 }
 
 /**

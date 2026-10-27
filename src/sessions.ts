@@ -1,8 +1,19 @@
 import { randomUUID } from 'crypto';
+import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { HookMessage } from './ipc';
+import { projectDirName, readAiTitle } from './history';
+import { HookMessage, RENAME_EVENT, checkSessionName } from './ipc';
 import { nameFromPrompt } from './naming';
 import { SessionStatus, nextStatus } from './status';
+
+/** A session's name until it's named: by Claude Code's title for it, or its first prompt. */
+const DEFAULT_NAME = 'New session';
+/**
+ * After a session's first prompt, when to look for its title again: a reply that uses no tools
+ * fires no hook until Stop.
+ */
+const TITLE_RETRY_MS = [3_000, 10_000];
 
 /**
  * One Claude conversation. A terminal can host several in a row: /clear ends the current
@@ -21,8 +32,12 @@ export interface Session {
   /** For side threads: the session this one was forked from. */
   parentId?: string;
   name: string;
-  /** 'user' names are never replaced by auto-naming. */
-  nameSource: 'default' | 'auto' | 'user';
+  /**
+   * 'default': not named yet. 'auto': from Claude Code's title for the conversation, or its
+   * first prompt. 'user': renamed by you; 'agent': renamed by Claude when asked
+   * (rename_session). Only 'default' names are replaced automatically.
+   */
+  nameSource: 'default' | 'auto' | 'user' | 'agent';
   status: SessionStatus;
   /** Set while the session is running in its terminal. */
   terminal?: vscode.Terminal;
@@ -48,7 +63,8 @@ export interface SessionPersistence {
 export class SessionStore implements vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
   private readonly terminals = new Map<string, vscode.Terminal>();
-  private defaultNameCount = 0;
+  /** Sessions still being named, by id: where their transcript is, and their first prompt as a name. */
+  private readonly naming = new Map<string, { transcript?: string; promptName?: string }>();
   private pendingSync = Promise.resolve();
   /** Set while applying session files, so changes read from disk aren't written back. */
   private applyingFiles = false;
@@ -152,10 +168,6 @@ export class SessionStore implements vscode.Disposable {
     } finally {
       this.applyingFiles = false;
     }
-    for (const session of this.sessions.values()) {
-      const n = /^Claude (\d+)$/.exec(session.name);
-      this.defaultNameCount = Math.max(this.defaultNameCount, n ? Number(n[1]) : 0);
-    }
   }
 
   get all(): Session[] {
@@ -167,14 +179,14 @@ export class SessionStore implements vscode.Disposable {
   }
 
   /** Launches a terminal in `launchDir` via `createTerminal` (given the session's name) and registers the session in it. */
-  /** With a `name`, the session isn't auto-named from its first prompt. */
+  /** With a `name`, the session isn't named automatically. */
   create(
     terminalId: string,
     launchDir: string,
     createTerminal: (name: string) => vscode.Terminal,
     name?: string,
   ): Session {
-    const sessionName = name ?? this.nextDefaultName();
+    const sessionName = name ?? DEFAULT_NAME;
     const terminal = createTerminal(sessionName);
     this.terminals.set(terminalId, terminal);
     return this.startSession(terminalId, terminal, launchDir, sessionName, name ? 'auto' : 'default');
@@ -247,14 +259,17 @@ export class SessionStore implements vscode.Disposable {
     if (!session) {
       return;
     }
-    if (payload.hook_event_name === 'UserPromptSubmit' && session.nameSource === 'default') {
-      const name = nameFromPrompt(payload.prompt);
-      if (name) {
-        session.name = name;
-        session.nameSource = 'auto';
-        this.terminalNameChanged.fire(session);
+    if (payload.hook_event_name === RENAME_EVENT) {
+      // From the MCP server's rename_session; not a Claude Code hook, so no status change.
+      const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+      if (checkSessionName(name)) {
+        this.log.warn(`${session.name}: ignoring rename to ${JSON.stringify(payload.name)}`);
+      } else {
+        this.setName(session, name, 'agent');
       }
+      return;
     }
+    this.nameFromHook(session, payload);
     const status = nextStatus(session.status, payload);
     if (status === 'exited') {
       this.detach(session);
@@ -266,6 +281,68 @@ export class SessionStore implements vscode.Disposable {
   rename(session: Session, name: string): void {
     session.name = name;
     session.nameSource = 'user';
+    this.changed.fire(session);
+  }
+
+  /**
+   * Names a new session after Claude Code's title for its conversation (`ai-title`), which
+   * appears in the transcript right after the first prompt and never changes. Looked for on
+   * each hook until found; a session that reaches Stop without one is named from its first
+   * prompt instead. Side threads are named from their first prompt: a fork's transcript only
+   * has its parent's title.
+   */
+  private nameFromHook(session: Session, payload: Record<string, unknown>): void {
+    if (session.nameSource !== 'default') {
+      return;
+    }
+    const event = payload.hook_event_name;
+    if (session.parentId) {
+      const name = event === 'UserPromptSubmit' ? nameFromPrompt(payload.prompt) : undefined;
+      if (name) {
+        this.setName(session, name, 'auto');
+      }
+      return;
+    }
+    const pending = this.naming.get(session.id) ?? {};
+    this.naming.set(session.id, pending);
+    if (typeof payload.transcript_path === 'string') {
+      pending.transcript = payload.transcript_path;
+    }
+    if (event === 'UserPromptSubmit') {
+      pending.promptName ??= nameFromPrompt(payload.prompt);
+      for (const ms of TITLE_RETRY_MS) {
+        setTimeout(() => void this.lookForTitle(session, false), ms);
+      }
+    }
+    void this.lookForTitle(session, event === 'Stop');
+  }
+
+  /** Names `session` from its title if it's there yet; with `fallBack`, from its first prompt if not. */
+  private async lookForTitle(session: Session, fallBack: boolean): Promise<void> {
+    const pending = this.naming.get(session.id);
+    const transcript =
+      pending?.transcript ??
+      (session.cwd && session.claudeSessionId
+        ? path.join(os.homedir(), '.claude', 'projects', projectDirName(session.cwd), `${session.claudeSessionId}.jsonl`)
+        : undefined);
+    const title = transcript && (await readAiTitle(transcript));
+    // Named meanwhile (another lookup, or a rename), or gone.
+    if (session.nameSource !== 'default' || !this.sessions.has(session.id)) {
+      this.naming.delete(session.id);
+      return;
+    }
+    const name = title || (fallBack ? pending?.promptName : undefined);
+    if (name) {
+      this.naming.delete(session.id);
+      this.setName(session, name, 'auto');
+    }
+  }
+
+  private setName(session: Session, name: string, source: Session['nameSource']): void {
+    session.name = name;
+    session.nameSource = source;
+    this.log.info(`named ${name} (${source})`);
+    this.terminalNameChanged.fire(session);
     this.changed.fire(session);
   }
 
@@ -352,7 +429,7 @@ export class SessionStore implements vscode.Disposable {
     terminalId: string,
     terminal: vscode.Terminal,
     launchDir: string | undefined,
-    name = this.nextDefaultName(),
+    name = DEFAULT_NAME,
     nameSource: Session['nameSource'] = 'default',
   ): Session {
     const session: Session = {
@@ -376,10 +453,6 @@ export class SessionStore implements vscode.Disposable {
       session.shellPid = pid;
       this.changed.fire(session);
     });
-  }
-
-  private nextDefaultName(): string {
-    return `Claude ${++this.defaultNameCount}`;
   }
 
   /** Marks a session exited and frees its terminal for whatever runs in it next. */

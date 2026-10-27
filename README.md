@@ -65,8 +65,24 @@ Open the Spool icon in the activity bar.
 - To comment on code, click the **+** in the editor gutter (or select code and use **Comment
   for Claude** in the context menu), then **Send** to the current session, **Queue** it for
   later, or **More…** to branch or start a new session with it.
+- New sessions name themselves after Claude Code's title for the conversation. To have a
+  session pick a new name, use **Let Claude Name It** in its right-click menu, or the ✨ in the
+  **Rename…** box.
 - **Next Reply** (Cmd+Alt+N, Ctrl+Alt+N elsewhere) jumps between Claude's replies.
 - Ask a session how something works across files and it builds a walkthrough;
   Ctrl+Alt+[ and Ctrl+Alt+] move between steps.
 
 Sessions and comments are per editor: VS Code and Cursor each keep their own.
+
+## Releasing
+
+With a clean working tree on master:
+
+```sh
+npm version patch        # or minor / major: bumps package.json, commits, tags v<version>
+git push --follow-tags   # pushes the commit and the tag
+```
+
+The tag starts the release workflow (`.github/workflows/release.yml`). It builds the hook for
+each platform, checks the tag matches `package.json`'s version, and attaches `spool.vsix` to a
+GitHub Release, which the install command above downloads.

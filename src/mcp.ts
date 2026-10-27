@@ -9,14 +9,18 @@
  */
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 import * as readline from 'readline';
 import type { CodeComment, Walkthrough } from './comments';
+import { HookMessage, RENAME_EVENT, checkSessionName } from './ipc';
 import { JsonFiles } from './persistence';
 import type { SavedSession } from './sessions';
 
 const spoolId = process.env.SPOOL_ID;
 const storage = process.env.SPOOL_STORAGE;
+/** The broker's socket, which hooks use; rename_session sends through it too. */
+const socketPath = process.env.SPOOL_SOCKET;
 
 /** Wide reads (anything but the default) return at most this many comments, newest first. */
 const READ_LIMIT = 20;
@@ -29,7 +33,8 @@ said about a file before you change it; don't answer resolved threads. Use add_c
 code when they ask for one (a review, "point out…") or something needs their attention; never on every edit. Use \
 add_walkthrough when asked how something works across files, or to explain a change: ordered steps the user moves \
 through with Previous / Next. When the user replies on a step you can answer, change the walkthrough (add_steps, \
-edit_comment, remove_steps, update_walkthrough), or both; say what you changed in your reply.`;
+edit_comment, remove_steps, update_walkthrough), or both; say what you changed in your reply. Call rename_session \
+only when asked to name or rename this session: a short name, 2-4 words, for what the session is working on.`;
 
 const STEP_SCHEMA = {
   type: 'object',
@@ -150,6 +155,17 @@ const TOOLS = [
         order: { type: 'array', items: { type: 'string' }, description: 'Every step id, in the new order' },
       },
       required: ['walkthrough_id'],
+    },
+  },
+  {
+    name: 'rename_session',
+    description:
+      "Rename this session in the user's Spool sidebar and terminal tab. Only when asked to name or rename it. " +
+      'A short name, 2-4 words, for what the session is working on.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'One line, at most 40 characters' } },
+      required: ['name'],
     },
   },
 ];
@@ -487,9 +503,52 @@ function readComments(
   return text(`${header}\n\n${formatted.join('\n\n')}`);
 }
 
-function callTool(name: string | undefined, args: Record<string, unknown>): ToolResult {
+/** How long rename_session waits for the window to save the name, in 100ms steps. */
+const RENAME_WAIT_STEPS = 30;
+
+/**
+ * Sessions belong to the window that started them, which writes their files, so the rename
+ * goes to it over the broker like a hook. Waits for the window to save the new name.
+ */
+async function renameSession(args: Record<string, unknown>): Promise<ToolResult> {
+  const session = currentSession();
+  if (!session || session.status === 'exited' || !socketPath) {
+    return text('No running Spool session for this terminal.', true);
+  }
+  const name = typeof args.name === 'string' ? args.name.trim() : '';
+  const problem = checkSessionName(name);
+  if (problem) {
+    return text(problem, true);
+  }
+  const message: HookMessage = {
+    spoolId: spoolId!,
+    payload: { hook_event_name: RENAME_EVENT, session_id: session.claudeSessionId, name },
+  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.connect(socketPath, () => socket.end(JSON.stringify(message) + '\n'));
+      socket.on('close', () => resolve());
+      socket.on('error', reject);
+    });
+  } catch (err) {
+    return text(`Couldn't reach Spool: ${(err as Error).message}`, true);
+  }
+  for (let i = 0; i < RENAME_WAIT_STEPS; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const saved = ownSessions().find((s) => s.id === session.id);
+    if (saved?.name === name && saved.nameSource === 'agent') {
+      return text(`Renamed the session to "${name}".`);
+    }
+  }
+  return text("Sent the rename, but Spool hasn't applied it. Is the editor window that started this session open?", true);
+}
+
+function callTool(name: string | undefined, args: Record<string, unknown>): ToolResult | Promise<ToolResult> {
   if (!spoolId || !storage) {
     return text('Spool comments are only available in sessions started from Spool.', true);
+  }
+  if (name === 'rename_session') {
+    return renameSession(args);
   }
   const files = new JsonFiles<CodeComment>(path.join(storage, 'comments'));
   const walkthroughFiles = new JsonFiles<Walkthrough>(path.join(storage, 'walkthroughs'));
@@ -590,7 +649,7 @@ function callTool(name: string | undefined, args: Record<string, unknown>): Tool
   return text(`Unknown tool ${name}.`, true);
 }
 
-function handle(request: Request): unknown {
+function handle(request: Request): unknown | Promise<unknown> {
   switch (request.method) {
     case 'initialize':
       return {
@@ -615,7 +674,7 @@ function send(message: object): void {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
 }
 
-readline.createInterface({ input: process.stdin }).on('line', (line) => {
+readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   let request: Request;
   try {
     request = JSON.parse(line);
@@ -627,7 +686,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   try {
-    const result = handle(request);
+    const result = await handle(request);
     if (result === undefined) {
       send({ id: request.id, error: { code: -32601, message: `Method not found: ${request.method}` } });
     } else {

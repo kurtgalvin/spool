@@ -7,6 +7,8 @@ import * as readline from 'readline';
 const TAIL_BYTES = 256 * 1024;
 /** How far into a file to look for its first prompt. */
 const MAX_HEAD_LINES = 2000;
+/** Claude Code writes a conversation's title right after its first prompt, near the top. */
+const TITLE_HEAD_BYTES = 64 * 1024;
 
 /** A Claude conversation found in Claude Code's transcripts. */
 export interface Conversation {
@@ -162,6 +164,34 @@ export class TranscriptIndex {
 }
 
 type Line = Record<string, unknown>;
+
+/**
+ * The title Claude Code generated for a conversation (`ai-title`), from the start of its
+ * transcript; undefined if it isn't there yet or the file can't be read.
+ */
+export async function readAiTitle(file: string): Promise<string | undefined> {
+  let text: string;
+  try {
+    const handle = await fs.promises.open(file, 'r');
+    try {
+      const buffer = Buffer.alloc(TITLE_HEAD_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      text = buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return undefined;
+  }
+  let title: string | undefined;
+  // A partial last line just fails to parse.
+  for (const line of text.split('\n').map(parse)) {
+    if (line?.type === 'ai-title') {
+      title = stringOf(line.aiTitle) ?? title;
+    }
+  }
+  return title?.trim() || undefined;
+}
 
 /**
  * A conversation from its transcript: cwd, entrypoint and first prompt from the start, titles

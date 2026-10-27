@@ -38,6 +38,17 @@
         "category": "Spool"
       },
       {
+        "command": "spool.nameSession",
+        "title": "Let Claude Name It",
+        "category": "Spool",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "spool.pickSessionToName",
+        "title": "Let Claude Name Session…",
+        "category": "Spool"
+      },
+      {
         "command": "spool.killSession",
         "title": "Kill",
         "category": "Spool",
@@ -283,9 +294,14 @@
           "group": "3_lifecycle@0"
         },
         {
+          "command": "spool.nameSession",
+          "when": "view == spool.sessions && viewItem =~ /^session:(starting|working|needs-input|idle)(:|$)/",
+          "group": "1_edit@2"
+        },
+        {
           "command": "spool.branchSession",
           "when": "view == spool.sessions && viewItem =~ /^session:[^:]+:conversation/",
-          "group": "1_edit@2"
+          "group": "1_edit@3"
         },
         {
           "command": "spool.sendComments",
@@ -430,6 +446,10 @@
         },
         {
           "command": "spool.renameSession",
+          "when": "false"
+        },
+        {
+          "command": "spool.nameSession",
           "when": "false"
         },
         {

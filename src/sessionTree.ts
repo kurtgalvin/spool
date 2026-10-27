@@ -336,6 +336,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeE
     item.tooltip = [
       `${session.name} — ${display.label}`,
       session.elsewhere && 'Running in another VS Code window',
+      session.nameSource === 'agent' && 'Named by the agent',
       session.claudeSessionId && `Claude session ${session.claudeSessionId}`,
     ]
       .filter(Boolean)

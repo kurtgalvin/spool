@@ -24,6 +24,27 @@ export interface HookMessage {
 }
 
 /**
+ * Not a Claude Code hook: sent like one by the MCP server's rename_session, so the window that
+ * owns the session renames it. Payload: `{hook_event_name, session_id, name}`.
+ */
+export const RENAME_EVENT = 'SpoolRename';
+export const MAX_SESSION_NAME_LENGTH = 40;
+
+/** What's wrong with a session name from Claude (already trimmed), or undefined if it's fine. */
+export function checkSessionName(name: string): string | undefined {
+  if (!name) {
+    return 'The name is empty.';
+  }
+  if (/[\r\n]/.test(name)) {
+    return 'The name must be one line.';
+  }
+  if (name.length > MAX_SESSION_NAME_LENGTH) {
+    return `The name is ${name.length} characters; keep it to ${MAX_SESSION_NAME_LENGTH} or fewer.`;
+  }
+  return undefined;
+}
+
+/**
  * Sent by a window: first line `subscribe` with its extension version, then `ping` every
  * PING_INTERVAL_MS. `shutdown` asks an outdated broker to exit so a newer one can start.
  */
